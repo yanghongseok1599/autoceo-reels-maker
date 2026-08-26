@@ -18,6 +18,14 @@ const MAX_TITLE = 40;
  */
 const MAX_HEADLINE = 64;
 
+/**
+ * 표제 아래 둘째 줄(`subtitle` / `callToAction`)의 상한. 머리만 자르고 꼬리를 그대로 두면
+ * 넘침이 둘째 줄로 자리만 옮긴다 — 155자 세그먼트가 32px짜리 91자 부제를 만들었다.
+ * 꼬리의 꼬리를 내려보낼 필드는 없으므로 여기서는 말줄임표로 잘렸다는 표시를 남긴다.
+ * 둘째 줄은 표제를 거들 뿐이라 표제보다 짧아야 하고, 32px에서 40자면 두 줄 남짓이다.
+ */
+const MAX_TAIL = 40;
+
 /** 자막이 하나도 없을 때 만드는 타이틀 카드의 길이(초) */
 const FALLBACK_SECONDS = 5;
 
@@ -44,7 +52,11 @@ const QUOTE_MARKS = /["'「『」』]/g;
  * 붙여, 잘렸다는 사실을 화면에 남긴다 — 조용히 사라지는 것보다 낫다.
  */
 function truncate(text: string, limit: number = MAX_TITLE): string {
-  const { head, tail } = cutAtWord(text.trim(), limit - 1);
+  const clean = text.trim();
+  // 정확히 limit자면 그대로 들어간다. 말줄임표 자리(limit - 1)는 **자를 때만** 뗀다 —
+  // 무조건 떼면 딱 맞는 문장이 마지막 어절을 잃는다.
+  if (clean.length <= limit) return clean;
+  const { head, tail } = cutAtWord(clean, limit - 1);
   return tail ? `${head}…` : head;
 }
 
@@ -121,11 +133,14 @@ function sceneFromSegment(
      */
     case 'title_card': {
       const { head, tail } = cutAtWord(text, MAX_HEADLINE);
-      return { ...base, type, title: head, subtitle: tail || undefined };
+      return { ...base, type, title: head, subtitle: tail ? truncate(tail, MAX_TAIL) : undefined };
     }
     case 'conclusion': {
       const { head, tail } = cutAtWord(text, MAX_HEADLINE);
-      return { ...base, type, heading: head, callToAction: tail || undefined };
+      return {
+        ...base, type, heading: head,
+        callToAction: tail ? truncate(tail, MAX_TAIL) : undefined,
+      };
     }
     case 'emphasis': return { ...base, type, keyword: truncate(text) };
     case 'quote': {

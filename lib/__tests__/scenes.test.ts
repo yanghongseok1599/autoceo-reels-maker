@@ -47,8 +47,19 @@ function primaryText(scene: SceneDirective): string {
 const seg = (id: number, text: string) => ({ id, text, start: id, end: id + 1, words: [] });
 const subs = (...texts: string[]): SubtitleJSON => texts.map((t, i) => seg(i, t));
 
-/** lib/pipeline/scenes.ts의 MAX_HEADLINE. 표제 카드 한 필드가 담는 최대 길이 */
+/** lib/pipeline/scenes.ts의 MAX_HEADLINE. 표제 카드 표제가 담는 최대 길이 */
 const HEADLINE_LIMIT = 64;
+/** lib/pipeline/scenes.ts의 MAX_TAIL. 표제 아래 둘째 줄이 담는 최대 길이 */
+const TAIL_LIMIT = 40;
+/** lib/pipeline/scenes.ts의 MAX_TITLE. 목록 말머리·본문 제목의 상한 */
+const TITLE_LIMIT = 40;
+
+/** 정확히 TITLE_LIMIT자인 목록 말머리. 경계에서 어절을 잃는지 보는 표본이다 */
+const LEAD_AT_LIMIT = '무릎이 안쪽으로 모이는 문제를 바로잡는 순서는 이렇습니다 가나다라마바사아';
+/** 정확히 HEADLINE_LIMIT자인 여는 문장 */
+const HEAD_AT_LIMIT = '오늘은 스쿼트를 할 때 무릎이 안쪽으로 자꾸 모이는 아주 흔한 문제를 바로잡는 간단한 팁을 지금부터 다 알려드릴게요';
+/** 머리도 꼬리도 넘치는 긴 세그먼트 */
+const FAR_OVERFLOW = '오늘은 스쿼트를 할 때 무릎이 안쪽으로 자꾸 모이는 아주 흔한 문제를 바로잡는 간단한 팁을 지금부터 하나씩 차근차근 알려드릴 텐데요 발바닥을 바닥에 고르게 누르고 내려갈 때 무릎이 두 번째 발가락 방향을 그대로 따라가도록 천천히 연습해 보시면 확실히 달라집니다';
 
 const wordsOf = (text: string): string[] => text.split(/\s+/).filter(Boolean);
 
@@ -83,6 +94,10 @@ describe('buildScenes', () => {
    * 어절 한가운데를 끊지 않고 잘렸다는 표시(말줄임표)를 남긴다.
    */
   it('cuts a whole-script fallback title at a word boundary and marks it', () => {
+    // 정확히 상한 길이인 대본은 자르지 않는다 — 말줄임표 자리를 무조건 떼면 여기서 잃는다
+    expect(asTitleCard(buildScenes({ subtitles: [], script: HEAD_AT_LIMIT, sheet })[0]).title)
+      .toBe(HEAD_AT_LIMIT);
+
     const long = 'ㄱ'.repeat(200);
     expect(asTitleCard(buildScenes({ subtitles: [], script: long, sheet })[0]).title.length)
       .toBeLessThanOrEqual(HEADLINE_LIMIT);
@@ -386,6 +401,35 @@ describe('buildScenes — 표제 카드', () => {
     expect(wordsOf(`${card.heading} ${card.callToAction}`)).toEqual(wordsOf(LONG));
   });
 
+  it('keeps an opening line of exactly the headline limit whole', () => {
+    expect(HEAD_AT_LIMIT).toHaveLength(HEADLINE_LIMIT);
+    const card = asTitleCard(
+      buildScenes({ subtitles: subs(HEAD_AT_LIMIT, '끝'), script: '대본', sheet })[0],
+    );
+    expect(card.title).toBe(HEAD_AT_LIMIT);
+    expect(card.subtitle).toBeUndefined();
+  });
+
+  /**
+   * 머리만 자르고 꼬리를 놔두면 넘침이 둘째 줄로 자리만 옮긴다. 꼬리의 꼬리를 내려보낼
+   * 필드는 없으므로 여기서는 잘라야 하고, 대신 말줄임표로 잘렸다는 표시를 남긴다.
+   */
+  it('bounds the overflow tail instead of moving the problem to the second line', () => {
+    const card = asTitleCard(
+      buildScenes({ subtitles: subs(FAR_OVERFLOW, '끝'), script: '대본', sheet })[0],
+    );
+    const sub = card.subtitle ?? '';
+    expect(sub.length).toBeGreaterThan(0);
+    expect(sub.length).toBeLessThanOrEqual(TAIL_LIMIT);
+    expect(sub.endsWith('…')).toBe(true);
+
+    const scenes = buildScenes({ subtitles: subs('제목', FAR_OVERFLOW), script: '대본', sheet });
+    const cta = asConclusion(scenes[scenes.length - 1]).callToAction ?? '';
+    expect(cta.length).toBeGreaterThan(0);
+    expect(cta.length).toBeLessThanOrEqual(TAIL_LIMIT);
+    expect(cta.endsWith('…')).toBe(true);
+  });
+
   it('never cuts a 어절 in half', () => {
     const words = wordsOf(LONG);
     const card = asTitleCard(buildScenes({ subtitles: subs(LONG, '끝'), script: '대본', sheet })[0]);
@@ -393,6 +437,36 @@ describe('buildScenes — 표제 카드', () => {
     const close = asConclusion(scenes[scenes.length - 1]);
     for (const word of [...wordsOf(card.title), ...wordsOf(close.heading)]) {
       expect(words).toContain(word);
+    }
+  });
+});
+
+/**
+ * 꼬리를 내려보낼 필드가 없는 자리는 자를 수밖에 없다. 그렇다고 **딱 맞는** 문장까지
+ * 자르면 안 된다 — 말줄임표 자리를 조건 없이 떼는 구현은 정확히 상한 길이인 말머리에서
+ * 마지막 어절을 통째로 잃었다. 글자 손실을 없애려던 변경이 새 손실을 만든 자리다.
+ */
+describe('buildScenes — 자르기 경계', () => {
+  const listLine = (lead: string) => `${lead} 첫째 준비, 둘째 하강`;
+
+  it('keeps a list lead-in of exactly the limit whole', () => {
+    expect(LEAD_AT_LIMIT).toHaveLength(TITLE_LIMIT);
+    const s = subs('제목', listLine(LEAD_AT_LIMIT), '끝');
+    expect(asList(buildScenes({ subtitles: s, script: '대본', sheet })[1]).title)
+      .toBe(LEAD_AT_LIMIT);
+  });
+
+  it('ellipsizes at a word boundary once past the limit', () => {
+    const over = `${LEAD_AT_LIMIT}자`;
+    expect(over.length).toBeGreaterThan(TITLE_LIMIT);
+    const s = subs('제목', listLine(over), '끝');
+    const title = asList(buildScenes({ subtitles: s, script: '대본', sheet })[1]).title;
+
+    expect(title.length).toBeLessThanOrEqual(TITLE_LIMIT);
+    expect(title.endsWith('…')).toBe(true);
+    // 남은 조각은 전부 원문의 온전한 어절이다 — 어절 한가운데서 끊지 않는다
+    for (const word of wordsOf(title.slice(0, -1))) {
+      expect(wordsOf(over)).toContain(word);
     }
   });
 });

@@ -56,6 +56,9 @@ export const TitleCard: React.FC<{ scene: TitleCardScene; palette: Palette }> = 
           position: 'relative',
           fontSize: 32, fontWeight: 500, fontFamily: "'Pretendard', sans-serif",
           color: `${accent}cc`, textAlign: 'center', maxWidth: 860, lineHeight: 1.4,
+          // 제목과 같은 규칙이다. 이 줄은 오래 비어 있었지만 이제 넘친 꼬리가 들어온다 —
+          // keep-all이 없으면 `알려 드`/`릴게요.` 가 둘째 줄로 자리만 옮겨 되살아난다.
+          wordBreak: 'keep-all', overflowWrap: 'break-word',
           opacity: subOpacity, transform: `translateY(${subY}px)`,
         }}>{scene.subtitle}</div>
       )}

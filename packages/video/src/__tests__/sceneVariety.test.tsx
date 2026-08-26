@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 // vi.mock은 vitest가 import보다 위로 끌어올리므로 아래 정적 import도 모킹된 remotion을 받는다
 import { TitleCard } from '../scenes/TitleCard';
 import { ContentSlide } from '../scenes/ContentSlide';
+import { ConclusionSlide } from '../scenes/ConclusionSlide';
 import { FALLBACK_PALETTE } from '../types';
 
 /**
@@ -80,8 +81,8 @@ const span = { startTime: 0, endTime: 3 };
 const TEXT = '많은 분들이 무릎이 안쪽으로 모여서 걱정하십니다.';
 
 /**
- * 프로덕션에서 실제로 오는 모양으로 비교한다. `subtitle`을 채우는 코드는 저장소에 없고
- * (`lib/pipeline/scenes.ts`의 title_card 분기는 title만 넣는다), `bullets`는 40자 이하
+ * 프로덕션에서 실제로 오는 모양으로 비교한다. `subtitle`은 세그먼트가 MAX_HEADLINE을
+ * 넘칠 때만 채워지므로 실제 전사에서는 거의 언제나 비고, `bullets`는 40자 이하
  * 세그먼트에서 언제나 빈다(`splitLead`). 즉 아래 두 씬이 두 카드의 **보통 모양**이다.
  */
 const titleCard = <TitleCard scene={{ ...span, type: 'title_card', title: TEXT }} palette={FALLBACK_PALETTE} />;
@@ -122,6 +123,32 @@ describe('content_slide는 title_card와 다른 종류의 카드로 보인다', 
     );
 
     expect(empty).toEqual(filled);
+  });
+
+  /**
+   * 결함 B는 표제에서 잡았지만, 표제 아래 **둘째 줄**은 오래 비어 있어 아무도 보지 않았다.
+   * 넘친 꼬리가 그 줄로 들어오기 시작하면 같은 결함이 자리만 옮겨 되살아난다.
+   * 그래서 두 카드에서 글자를 그리는 블록을 **전부** 훑는다.
+   */
+  it('표제 아래 둘째 줄도 어절을 쪼개지 않는다', () => {
+    const withSecondLine = [
+      <TitleCard
+        key="t"
+        scene={{ ...span, type: 'title_card', title: TEXT, subtitle: '알려 드릴게요' }}
+        palette={FALLBACK_PALETTE}
+      />,
+      <ConclusionSlide
+        key="c"
+        scene={{ ...span, type: 'conclusion', heading: TEXT, callToAction: '알려 드릴게요' }}
+        palette={FALLBACK_PALETTE}
+      />,
+    ];
+
+    for (const element of withSecondLine) {
+      const textBlocks = styleBlocks(renderToStaticMarkup(element)).filter((b) => b['font-size']);
+      expect(textBlocks.length).toBeGreaterThanOrEqual(2);
+      for (const block of textBlocks) expect(block['word-break']).toBe('keep-all');
+    }
   });
 
   it('두 카드 모두 한국어 어절을 어절 한가운데서 쪼개지 않는다', () => {

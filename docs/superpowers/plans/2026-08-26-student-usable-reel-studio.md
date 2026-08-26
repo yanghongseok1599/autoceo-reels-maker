@@ -1298,7 +1298,8 @@ git status --porcelain .local-data                # 비어 있어야 한다
 ```ts
 import { describe, it, expect, beforeEach } from 'vitest';
 import { POST as claimRoute } from '../jobs/next/route';
-import { enqueueJob } from '@/lib/jobs';
+import { PATCH as patchRoute, GET as statusRoute } from '../jobs/[id]/route';
+import { enqueueJob, getJob } from '@/lib/jobs';
 import { resetStoreForTests } from '@/lib/store/file-store';
 
 beforeEach(async () => {
@@ -1340,6 +1341,82 @@ describe('POST /api/jobs/next', () => {
     await enqueueJob({ projectId: project.id, ownerId: 'u1' });
     const body = await (await claimRoute(req('test-token'))).json();
     expect(body.project.script).toBe('무릎 통증 팁');
+  });
+
+  it('reports a null project rather than hiding the job', async () => {
+    await enqueueJob({ projectId: 'gone', ownerId: 'u1' });
+    const body = await (await claimRoute(req('test-token'))).json();
+    expect(body.job.projectId).toBe('gone');
+    expect(body.project).toBeNull();
+  });
+});
+
+// PATCH는 워커의 유일한 피드백 채널이다. 여기가 조용히 깨지면 잡이 claimed 상태로 묶인 채
+// 스테일 회수까지 15분을 흘려보낸다. 배포 검증에서 발견하기엔 너무 비싼 실패다.
+describe('PATCH /api/jobs/[id]', () => {
+  function patchReq(id: string, token: string | undefined, body: unknown) {
+    return new Request(`http://localhost/api/jobs/${id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'x-worker-token': token } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('rejects a request with no token', async () => {
+    const job = await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
+    const res = await patchRoute(patchReq(job.id, undefined, { progress: 50 }), {
+      params: Promise.resolve({ id: job.id }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 404 for a job that does not exist', async () => {
+    const res = await patchRoute(patchReq('nope', 'test-token', { progress: 50 }), {
+      params: Promise.resolve({ id: 'nope' }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('records progress reported by the worker', async () => {
+    const job = await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
+    const res = await patchRoute(patchReq(job.id, 'test-token', { status: 'rendering', progress: 42 }), {
+      params: Promise.resolve({ id: job.id }),
+    });
+    expect(res.status).toBe(200);
+    expect((await getJob(job.id))?.progress).toBe(42);
+    expect((await getJob(job.id))?.status).toBe('rendering');
+  });
+
+  it('records the result url on completion', async () => {
+    const job = await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
+    await patchRoute(patchReq(job.id, 'test-token', {
+      status: 'completed', progress: 100, resultUrl: '/out/a.mp4',
+    }), { params: Promise.resolve({ id: job.id }) });
+    const stored = await getJob(job.id);
+    expect(stored?.status).toBe('completed');
+    expect(stored?.resultUrl).toBe('/out/a.mp4');
+  });
+});
+
+describe('GET /api/jobs/[id]', () => {
+  function getReq(id: string) {
+    return new Request(`http://localhost/api/jobs/${id}`);
+  }
+
+  it('returns the polling shape the UI needs', async () => {
+    const job = await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
+    const body = await (await statusRoute(getReq(job.id), {
+      params: Promise.resolve({ id: job.id }),
+    })).json();
+    expect(body).toEqual({ status: 'queued', progress: 0, resultUrl: null, error: null });
+  });
+
+  it('returns 404 for a job that does not exist', async () => {
+    const res = await statusRoute(getReq('nope'), { params: Promise.resolve({ id: 'nope' }) });
+    expect(res.status).toBe(404);
   });
 });
 ```
@@ -1416,7 +1493,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 npx vitest run app/api/__tests__/jobs-route.test.ts
 ```
 
-기대: 4개 PASS
+기대: 12개 PASS (claim 6 + PATCH 4 + GET 2)
 
 - [ ] **Step 6: 커밋**
 

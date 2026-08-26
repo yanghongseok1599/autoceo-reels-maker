@@ -1513,7 +1513,7 @@ git commit -m "feat: add worker job claim and report routes"
 **Interfaces:**
 - Consumes: `lib/fish-audio-client.ts`의 `synthesizeFishSpeech` (기존 코드, 수정하지 않음)
 - Produces:
-  - `synthesizeNarration(input: { text: string; referenceId: string; speakingSpeed?: number; instruct?: string }): Promise<{ audioPath: string; durationSec: number }>`
+  - `synthesizeNarration(input: { text: string; referenceId: string; speakingSpeed?: number; instruct?: string }): Promise<{ audioPath: string }>` — 길이는 반환하지 않는다(항상 0이 되므로)
   - `transcribeToSubtitles(audioPath: string): Promise<SubtitleJSON>`
   - `parseWhisperJson(raw: unknown): SubtitleJSON`
 
@@ -1615,6 +1615,42 @@ describe('parseWhisperJson', () => {
     const noTokens = { transcription: [{ offsets: { from: 0, to: 1000 }, text: '무음' }] };
     expect(parseWhisperJson(noTokens)[0].words).toEqual([]);
   });
+
+  // whisper 출력 형식은 이미 세 번 우리 가정과 달랐다. 망가진 항목 하나가
+  // 전체 전사를 죽이면 안 된다 — 그 실패는 잡 전체를 TypeError로 끝낸다.
+  it('drops a segment missing its offsets instead of throwing', () => {
+    const broken = {
+      transcription: [
+        { text: '멀쩡한 문장', offsets: { from: 0, to: 1000 }, tokens: [] },
+        { text: 'offsets 없음' },
+      ],
+    };
+    const parsed = parseWhisperJson(broken);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].text).toBe('멀쩡한 문장');
+  });
+
+  it('drops a segment missing its text instead of throwing', () => {
+    const broken = { transcription: [{ offsets: { from: 0, to: 1000 } }] };
+    expect(parseWhisperJson(broken)).toEqual([]);
+  });
+
+  it('drops a malformed token but keeps the good ones beside it', () => {
+    const mixed = {
+      transcription: [
+        {
+          text: '섞임',
+          offsets: { from: 0, to: 1000 },
+          tokens: [
+            { text: '좋음', offsets: { from: 0, to: 400 } },
+            { text: '깨짐' },
+            { text: '또좋음', offsets: { from: 400, to: 900 } },
+          ],
+        },
+      ],
+    };
+    expect(parseWhisperJson(mixed)[0].words.map((w) => w.word)).toEqual(['좋음', '또좋음']);
+  });
 });
 ```
 
@@ -1644,23 +1680,41 @@ const SPECIAL_TOKEN = /^\[.*\]$/;
 interface WhisperToken { text: string; offsets: { from: number; to: number } }
 interface WhisperSegment { text: string; offsets: { from: number; to: number }; tokens?: WhisperToken[] }
 
+function hasSpan(x: unknown): x is { offsets: { from: number; to: number } } {
+  const o = (x as { offsets?: { from?: unknown; to?: unknown } })?.offsets;
+  return typeof o?.from === 'number' && typeof o?.to === 'number';
+}
+
+/**
+ * 외부 바이너리의 출력을 파싱한다. 형식이 우리 가정과 다른 적이 이미 세 번 있었으므로
+ * 망가진 항목 하나가 전체 전사를 죽이지 않도록 걸러낸다.
+ */
 export function parseWhisperJson(raw: unknown): SubtitleJSON {
-  const segments = (raw as { transcription?: WhisperSegment[] })?.transcription;
+  const segments = (raw as { transcription?: unknown[] })?.transcription;
   if (!Array.isArray(segments)) return [];
 
-  return segments.map((seg, id): SubtitleSegment => ({
-    id,
-    text: seg.text.trim(),
-    start: seg.offsets.from / 1000,
-    end: seg.offsets.to / 1000,
-    words: (seg.tokens ?? [])
-      .map((token) => ({
-        word: token.text.trim(),
-        start: token.offsets.from / 1000,
-        end: token.offsets.to / 1000,
-      }))
-      .filter((w) => w.word.length > 0 && !SPECIAL_TOKEN.test(w.word)),
-  }));
+  return segments
+    .filter(
+      (seg): seg is WhisperSegment =>
+        typeof (seg as WhisperSegment)?.text === 'string' && hasSpan(seg),
+    )
+    .map((seg, id): SubtitleSegment => ({
+      id,
+      text: seg.text.trim(),
+      start: seg.offsets.from / 1000,
+      end: seg.offsets.to / 1000,
+      words: (seg.tokens ?? [])
+        .filter(
+          (token): token is WhisperToken =>
+            typeof (token as WhisperToken)?.text === 'string' && hasSpan(token),
+        )
+        .map((token) => ({
+          word: token.text.trim(),
+          start: token.offsets.from / 1000,
+          end: token.offsets.to / 1000,
+        }))
+        .filter((w) => w.word.length > 0 && !SPECIAL_TOKEN.test(w.word)),
+    }));
 }
 
 export async function transcribeToSubtitles(audioPath: string): Promise<SubtitleJSON> {
@@ -1692,17 +1746,19 @@ export async function transcribeToSubtitles(audioPath: string): Promise<Subtitle
 import { synthesizeFishSpeech } from '@/lib/fish-audio-client';
 import path from 'node:path';
 
+/**
+ * `durationSec`는 반환하지 않는다. `synthesizeFishSpeech`의 성공 경로가 그 값을 세팅하지 않아
+ * 항상 0이 되고, 0을 길이로 믿는 호출자를 만들 뿐이다. 길이는 STT 결과의 마지막 세그먼트
+ * 끝시각에서 얻는다(Task 9 참조).
+ */
 export async function synthesizeNarration(input: {
   text: string; referenceId: string; speakingSpeed?: number; instruct?: string;
-}): Promise<{ audioPath: string; durationSec: number }> {
+}): Promise<{ audioPath: string }> {
   const result = await synthesizeFishSpeech(input);
   if (result.status === 'error' || !result.audioUrl) {
     throw new Error(result.error ?? '음성 합성에 실패했습니다.');
   }
-  return {
-    audioPath: path.join(process.cwd(), 'public', result.audioUrl),
-    durationSec: result.durationSec ?? 0,
-  };
+  return { audioPath: path.join(process.cwd(), 'public', result.audioUrl) };
 }
 ```
 
@@ -1712,7 +1768,7 @@ export async function synthesizeNarration(input: {
 npx vitest run lib/__tests__/stt.test.ts
 ```
 
-기대: 6개 PASS
+기대: 9개 PASS
 
 - [ ] **Step 5: whisper가 실제로 도는지 수동 확인**
 

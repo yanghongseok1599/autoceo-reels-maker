@@ -4,6 +4,10 @@ import path from 'node:path';
 
 export default defineConfig({
   plugins: [react()],
-  test: { environment: 'node', include: ['**/__tests__/**/*.test.ts?(x)'] },
+  test: {
+    environment: 'node',
+    include: ['**/__tests__/**/*.test.ts?(x)'],
+    setupFiles: ['./vitest.setup.ts'],
+  },
   resolve: { alias: { '@': path.resolve(__dirname, '.') } },
 });

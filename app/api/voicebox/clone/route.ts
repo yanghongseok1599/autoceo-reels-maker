@@ -1,10 +1,18 @@
-import { NextRequest, NextResponse } from "next/server";
-import { addProfileSample, createProfile } from "@/lib/voicebox-client";
+import { NextResponse } from "next/server";
+import { createFishVoice } from "@/lib/fish-audio-client";
+import { readSessionFromRequest } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
+  // 목소리에는 주인이 있어야 한다. 익명 클론은 누구의 것도 아니게 되고,
+  // 주인 없는 기록은 소유자 필터를 통과할 방법이 없다.
+  const ownerId = readSessionFromRequest(request);
+  if (!ownerId) {
+    return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
+  }
+
   let form: FormData;
   try {
     form = await request.formData();
@@ -30,16 +38,24 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const profile = await createProfile({
+    const filename = file instanceof File && file.name ? file.name : "voice-sample.wav";
+    const profile = await createFishVoice({
+      ownerId,
       name,
       language,
-      voiceType: "cloned",
-      description: "오토사장 아바타 릴스용 사용자 목소리",
+      audio: file,
+      filename,
+      referenceText,
     });
-    const filename = file instanceof File && file.name ? file.name : "voice-sample.wav";
-    await addProfileSample(profile.id, file, filename, referenceText);
 
-    return NextResponse.json({ ...profile, sampleCount: 1 });
+    return NextResponse.json({
+      id: profile.id,
+      name: profile.name,
+      language: profile.language,
+      voiceType: "cloned",
+      defaultEngine: "fish",
+      sampleCount: profile.sampleCount,
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : String(error) },

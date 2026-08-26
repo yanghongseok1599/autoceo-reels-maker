@@ -140,28 +140,6 @@ button {
   font-weight: 850;
 }
 
-.pricingButton {
-  position: relative;
-  padding: 0 18px;
-  background: #1f2328;
-  color: var(--ink);
-}
-
-.pricingButton::after {
-  position: absolute;
-  right: 10px;
-  bottom: -15px;
-  min-width: 92px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: var(--pink);
-  color: #fff;
-  content: "10명 모집";
-  font-size: 12px;
-  font-weight: 950;
-  letter-spacing: 0.6px;
-}
-
 .loginButton {
   padding: 0 18px;
   border: 1px solid rgba(202, 255, 0, 0.12) !important;
@@ -223,6 +201,24 @@ button {
   color: var(--ink);
 }
 
+.panelTabs .pending,
+.canvasToolbar .pending {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.panelTabs .pending span,
+.canvasToolbar .pending span {
+  display: inline-flex;
+  margin-left: 4px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: rgba(202, 255, 0, 0.1);
+  color: var(--acid);
+  font-size: 10px;
+  font-weight: 900;
+}
+
 .panelTabs .active::after {
   position: absolute;
   right: 0;
@@ -278,6 +274,21 @@ button {
 
 .presetBanner button {
   padding: 0 15px;
+}
+
+.presetBanner em {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid rgba(202, 255, 0, 0.18);
+  border-radius: 999px;
+  background: rgba(202, 255, 0, 0.08);
+  color: var(--acid);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 950;
+  white-space: nowrap;
 }
 
 .flowBuilder {
@@ -447,6 +458,7 @@ button {
 }
 
 .uploadDeck strong {
+  margin-bottom: 16px;
   color: #aaaeb4;
   font-size: 19px;
 }
@@ -517,6 +529,47 @@ button {
   background: rgba(202, 255, 0, 0.055) !important;
 }
 
+.voiceModeSelector {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 !important;
+  background: transparent !important;
+}
+
+.voiceModeSelector button {
+  display: grid;
+  gap: 5px;
+  min-height: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.2);
+  color: #f2f2ed;
+  justify-items: center;
+  text-align: center;
+}
+
+.voiceModeSelector button.active {
+  border-color: rgba(202, 255, 0, 0.65);
+  background:
+    linear-gradient(180deg, rgba(202, 255, 0, 0.12), rgba(202, 255, 0, 0.03)),
+    #101214;
+}
+
+.voiceModeSelector strong {
+  color: #f2f2ed;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.voiceModeSelector span {
+  color: #9ea2a7;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
 .voiceProfilePicker,
 .referenceScript {
   display: grid;
@@ -551,6 +604,96 @@ button {
   font-size: 12px;
   font-weight: 650;
   line-height: 1.45;
+}
+
+.higgsfieldPanel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 14px;
+  border: 1px solid rgba(202, 255, 0, 0.12);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(202, 255, 0, 0.06), transparent),
+    #171a1d;
+}
+
+.higgsfieldHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.higgsfieldHeader span {
+  color: var(--acid);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.higgsfieldHeader strong {
+  overflow: hidden;
+  color: #f2f2ed;
+  font-size: 13px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.higgsfieldActions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.higgsfieldActions button,
+.higgsfieldActions label {
+  display: grid;
+  min-height: 38px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  background: #101214;
+  color: #f2f2ed;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.higgsfieldActions button:first-child {
+  border-color: rgba(202, 255, 0, 0.45);
+  background: var(--acid);
+  color: #101214;
+}
+
+.higgsfieldActions input {
+  display: none;
+}
+
+.higgsfieldPanel textarea {
+  width: 100%;
+  min-height: 118px;
+  resize: vertical;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.24);
+  color: #c7cac4;
+  outline: 0;
+  padding: 11px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.higgsfieldChecklist {
+  display: grid;
+  gap: 6px;
+}
+
+.higgsfieldChecklist span {
+  color: #aeb2b7;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
 }
 
 .promptBox {
@@ -798,6 +941,99 @@ button {
   margin: 10px 0 22px;
 }
 
+.readyChecklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: -8px 0 12px;
+}
+
+.readyChecklist span {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  color: #8f9297;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.readyChecklist .done {
+  border-color: rgba(202, 255, 0, 0.3);
+  background: rgba(202, 255, 0, 0.08);
+  color: var(--acid);
+}
+
+.learningPanel {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 14px;
+  border: 1px solid rgba(202, 255, 0, 0.12);
+  border-radius: 15px;
+  background:
+    linear-gradient(180deg, rgba(202, 255, 0, 0.055), transparent),
+    #171a1d;
+}
+
+.learningHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.learningHeader span {
+  color: var(--acid);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.learningHeader strong {
+  color: #f2f2ed;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.learningPanel p {
+  margin: 0;
+  color: #b6babf;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.learningSignals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.learningSignals span {
+  display: inline-flex;
+  min-height: 25px;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #d8dbd4;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.reusePromptButton {
+  min-height: 36px;
+  border: 0;
+  border-radius: 10px;
+  background: #f2f2ed;
+  color: #101214;
+  font-size: 12px;
+  font-weight: 950;
+}
+
 .statusRow {
   display: flex;
   align-items: center;
@@ -989,6 +1225,7 @@ button {
 
 .previewCard:hover .videoPreview,
 .stepCard:hover .tonePreview,
+.stepCard:hover .exerciseResourcePreview,
 .stepCard:hover .presetCarousel,
 .stepCard:hover .outputFrame {
   filter: saturate(1.08) contrast(1.04);
@@ -1029,8 +1266,10 @@ button {
 
 .avatarPreviewSurface {
   display: block;
+  flex: none;
   height: auto;
   min-height: 0;
+  overflow: visible;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent),
     #070808;
@@ -1043,19 +1282,11 @@ button {
 .formatDPreview {
   background:
     linear-gradient(180deg, rgba(0, 0, 0, 0.08), transparent),
-    linear-gradient(90deg, transparent 0 14%, #f4f4f0 14% 86%, transparent 86%),
-    linear-gradient(135deg, #0a0a0a, #171717);
+    #080909;
 }
 
 .formatDPreview::before {
-  position: absolute;
-  top: 54px;
-  left: 50%;
-  width: 190px;
-  height: 128px;
-  background: #f5f5f0;
-  content: "";
-  transform: translateX(-50%);
+  display: none;
 }
 
 .formatDPreview .avatarFigure {
@@ -1072,8 +1303,18 @@ button {
   width: 100%;
   height: auto;
   max-height: none;
-  padding: 10px;
+  padding: 0;
   object-fit: initial;
+}
+
+.trainerExamplePhoto {
+  display: block;
+  position: relative;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 32%;
 }
 
 .motionTitle {
@@ -1082,11 +1323,12 @@ button {
   right: 22px;
   left: 22px;
   z-index: 2;
-  color: var(--acid);
+  color: #101214;
   font-family: var(--font-display);
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 950;
   text-align: center;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
 }
 
 .avatarFigure {
@@ -1224,6 +1466,90 @@ button {
   opacity: 1;
 }
 
+.exerciseResourcePreview {
+  position: relative;
+  height: 300px;
+  flex: 0 0 300px;
+  overflow: hidden;
+  border-radius: 25px;
+  background: #050505;
+  transition: filter 180ms ease;
+}
+
+.exerciseResourcePreview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0.92;
+  object-fit: cover;
+  object-position: center 34%;
+}
+
+.exerciseResourcePreview::after {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.72)),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.48), transparent 66%);
+  content: "";
+}
+
+.exerciseGuideOverlay {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  left: 14px;
+  z-index: 1;
+  display: grid;
+  gap: 9px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 17px;
+  background: rgba(11, 13, 15, 0.8);
+  backdrop-filter: blur(12px);
+}
+
+.exerciseGuideOverlay span {
+  width: max-content;
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: var(--acid);
+  color: #101214;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.exerciseGuideOverlay strong {
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 21px;
+  font-weight: 820;
+  line-height: 1.1;
+}
+
+.exerciseGuideOverlay p {
+  margin: 0;
+  color: #d5d8d2;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.exerciseGuideOverlay div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.exerciseGuideOverlay b {
+  min-height: 25px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #f2f2ed;
+  font-size: 11px;
+  font-weight: 850;
+}
+
 .tonePreview {
   position: relative;
   height: 300px;
@@ -1355,6 +1681,10 @@ button {
   object-position: center center;
 }
 
+.exerciseOutputPreview .outputExamplePhoto {
+  object-position: center 34%;
+}
+
 .outputCaption {
   position: absolute;
   right: 0;
@@ -1430,6 +1760,208 @@ button {
 
 .bottomStatus button {
   padding: 0 18px;
+}
+
+.resultFeedback {
+  min-width: 210px;
+}
+
+.resultFeedback > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.resultFeedback button {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: #121416;
+  color: #f2f2ed;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.resultFeedback button.active {
+  border-color: rgba(202, 255, 0, 0.5);
+  background: var(--acid);
+  color: #101214;
+}
+
+.resultFeedback button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.progressPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(202, 255, 0, 0.28);
+  background: rgba(202, 255, 0, 0.06);
+}
+
+.progressMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.progressStage {
+  font-size: 13px;
+  font-weight: 700;
+  color: #e7ecdf;
+}
+
+.progressPercent {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 900;
+  color: var(--acid);
+}
+
+.progressTrack {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.progressFill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--acid);
+  box-shadow: 0 0 14px rgba(202, 255, 0, 0.5);
+  transition: width 200ms ease;
+}
+
+.outputVideoPreview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+
+.outputAudioPlayer {
+  width: 100%;
+  height: 34px;
+  margin-top: 8px;
+}
+
+/* 결과 URL 없이 완료/실패로 끝났을 때. 예시 사진 대신 이유를 말한다. */
+.outputErrorState {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+  padding: 20px 16px;
+  border: 1px solid rgba(255, 122, 122, 0.45);
+  background: #1a1012;
+  text-align: center;
+}
+
+.outputErrorState strong {
+  color: #ff9d9d;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 820;
+  line-height: 1.2;
+}
+
+.outputErrorState p {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.stepCard.output.fullPreview .outputErrorState {
+  min-height: 160px;
+}
+
+.stepCard.output.fullPreview .outputFrame {
+  flex: none;
+  height: auto;
+  border-radius: 0;
+  background: transparent;
+}
+
+.stepCard.output.fullPreview .outputReelPreview {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.stepCard.output.fullPreview .outputExamplePhoto,
+.stepCard.output.fullPreview .outputVideoPreview {
+  height: auto;
+  object-fit: initial;
+}
+
+.activeStep {
+  border-color: var(--acid) !important;
+  box-shadow: 0 0 0 1.5px var(--acid), 0 0 24px rgba(202, 255, 0, 0.25) !important;
+}
+
+.tonePreviewControl {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.previewVoiceButton {
+  min-height: 40px;
+  border: 1px solid rgba(202, 255, 0, 0.3);
+  border-radius: 10px;
+  background: rgba(202, 255, 0, 0.08);
+  color: var(--acid);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.previewVoiceButton:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.previewVoiceAudio {
+  width: 100%;
+  height: 36px;
+}
+
+.previewProgress {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(202, 255, 0, 0.24);
+  background: rgba(202, 255, 0, 0.05);
+}
+
+.previewProgress .progressStage {
+  font-size: 12px;
+}
+
+.previewProgress .progressPercent {
+  font-size: 13px;
+}
+
+.nextStepBadge {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 3;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--acid);
+  color: #101214;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: -0.2px;
 }
 
 @media (max-width: 1300px) {
@@ -1511,3 +2043,15 @@ button {
     letter-spacing: -1px;
   }
 }
+
+.loginShell { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.loginCard { display: flex; flex-direction: column; gap: 16px; width: min(360px, 100%);
+  padding: 32px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; }
+.loginCard h1 { margin: 0; font-size: 28px; }
+.loginCard p { margin: 0; color: var(--muted); font-size: 14px; }
+.loginCard input { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line-strong);
+  background: var(--panel-2); color: var(--ink); }
+.loginCard button { padding: 12px 14px; border-radius: 10px; border: 0;
+  background: var(--acid); color: var(--bg); font-weight: 700; cursor: pointer; }
+.loginCard button:disabled { opacity: .5; cursor: default; }
+.loginError { color: var(--pink); font-size: 13px; }

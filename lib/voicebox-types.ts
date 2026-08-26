@@ -48,6 +48,7 @@ export interface VoiceboxGenerateRequest {
   engine?: VoiceEngine;
   modelSize?: "1.7B" | "0.6B" | "1B" | "3B";
   seed?: number;
+  instruct?: string;
 }
 
 export interface VoiceboxGenerateResponse {
@@ -56,4 +57,16 @@ export interface VoiceboxGenerateResponse {
   audioUrl?: string;
   durationSec?: number;
   error?: string;
+}
+
+export interface VoiceboxStartResponse {
+  generationId: string;
+  status: string;
+  error?: string;
+}
+
+export interface VoiceboxStatusResponse {
+  status: string;
+  audioUrl: string;
+  error: string;
 }

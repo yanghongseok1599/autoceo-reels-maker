@@ -1,0 +1,8 @@
+{
+  "name": "@studio/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "WORKER_RUN=1 tsx index.ts" },
+  "dependencies": { "tsx": "^4.0.0" }
+}

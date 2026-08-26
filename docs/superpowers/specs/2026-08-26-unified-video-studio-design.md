@@ -101,16 +101,27 @@ interface EngineCapabilities {
   requiresUserKey: boolean    // BYOK 여부
 }
 
+interface EngineInput {
+  projectId: string
+  ownerId: string
+  script: string
+  voiceReferenceId: string    // BYOK 자격증명은 여기 담아 전달한다(3단계)
+  outPath: string
+}
+
+interface EngineResult {
+  outputPath: string
+  durationSec: number
+}
+
 interface VideoEngine {
   id: EngineId
   capabilities: EngineCapabilities
-  prepare(input: ProjectInput): Promise<EnginePlan>
-  submit(plan: EnginePlan, ctx: EngineContext): Promise<EngineJobRef>
-  poll(ref: EngineJobRef, ctx: EngineContext): Promise<EngineStatus>
+  produce(input: EngineInput, onProgress: (pct: number) => void): Promise<EngineResult>
 }
 ```
 
-`EngineContext`는 사용자별 자격증명(3단계의 Higgsfield API 키)을 담는다. 1단계에서는 비어 있다.
+`prepare`/`submit`/`poll` 3단계가 아니라 `produce()` 한 번인 이유는 워커가 잡의 전 생애(claim → render → report)를 소유하기 때문이다 — 제출과 폴링을 반복할 대상(앱)이 없으므로 Higgsfield 어댑터도 내부에서 자체적으로 제출·폴링하고 끝나면 반환하면 된다.
 
 1단계에서 `remotion`만 구현하고 나머지 둘은 인터페이스만 선언한다. 3단계에서 Higgsfield를 붙일 때 UI·파이프라인·데이터 모델은 건드리지 않고 어댑터만 추가한다.
 

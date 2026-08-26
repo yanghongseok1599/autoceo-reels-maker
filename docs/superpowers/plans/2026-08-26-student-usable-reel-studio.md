@@ -945,6 +945,7 @@ git commit -m "feat: add word-level subtitles and voice energy analysis"
 - Consumes: 없음
 - Produces:
   - `Store { read<T>(key, fallback): Promise<T>; write<T>(key, value): Promise<void> }`
+  - `fileStore` — `STORE_DIR` 환경변수로 데이터 경로를 바꿀 수 있다. **경로는 호출 시점에 정해진다** (테스트가 임시 디렉터리를 쓸 수 있어야 하므로)
   - `store` — **모든 프로덕션 코드가 쓰는 단일 진입점.** `fileStore`를 직접 import하지 않는다 (Global Constraints). 테스트는 시드·초기화 목적으로 `fileStore`를 직접 써도 된다
   - `Project { id: string; ownerId: string; engine: 'remotion'; script: string; audioUrl: string|null; subtitles: SubtitleJSON|null; scenes: SceneDirective[]|null; resultUrl: string|null; createdAt: string }`
   - `createProject(input: { ownerId: string; script: string }): Promise<Project>`
@@ -962,10 +963,17 @@ git commit -m "feat: add word-level subtitles and voice energy analysis"
 
 ```ts
 import { describe, it, expect, beforeEach } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { enqueueJob, claimNextJob, updateJob, getJob, STALE_CLAIM_MS } from '../jobs';
 import { resetStoreForTests } from '../store/file-store';
 
-beforeEach(async () => { await resetStoreForTests(); });
+// 실제 .local-data/를 건드리지 않는다 — 거기엔 사용자의 학습 기록이 들어 있다.
+beforeEach(async () => {
+  process.env.STORE_DIR = mkdtempSync(path.join(os.tmpdir(), 'reels-store-'));
+  await resetStoreForTests();
+});
 
 describe('job queue', () => {
   it('enqueues a job in queued state', async () => {
@@ -1036,19 +1044,25 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Store } from './types';
 
-const dataDir = process.env.STORE_DIR ?? path.join(process.cwd(), '.local-data');
+/**
+ * 호출 시점에 경로를 정한다. 모듈 로드 시점에 고정하면 테스트가 `STORE_DIR`로 임시 디렉터리를
+ * 가리킬 수 없고, 그러면 테스트가 사용자의 실제 `.local-data/`에 쓰게 된다.
+ */
+function dataDir(): string {
+  return process.env.STORE_DIR ?? path.join(process.cwd(), '.local-data');
+}
 
 export const fileStore: Store = {
   async read<T>(key: string, fallback: T): Promise<T> {
     try {
-      return JSON.parse(await readFile(path.join(dataDir, `${key}.json`), 'utf8')) as T;
+      return JSON.parse(await readFile(path.join(dataDir(), `${key}.json`), 'utf8')) as T;
     } catch {
       return fallback;
     }
   },
   async write<T>(key: string, value: T): Promise<void> {
-    await mkdir(dataDir, { recursive: true });
-    await writeFile(path.join(dataDir, `${key}.json`), JSON.stringify(value, null, 2), 'utf8');
+    await mkdir(dataDir(), { recursive: true });
+    await writeFile(path.join(dataDir(), `${key}.json`), JSON.stringify(value, null, 2), 'utf8');
   },
 };
 
@@ -1102,10 +1116,16 @@ export async function getProject(id: string): Promise<Project | null> {
 
 ```ts
 import { describe, it, expect, beforeEach } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createProject, getProject } from '../projects';
 import { resetStoreForTests } from '../store/file-store';
 
-beforeEach(async () => { await resetStoreForTests(); });
+beforeEach(async () => {
+  process.env.STORE_DIR = mkdtempSync(path.join(os.tmpdir(), 'reels-store-'));
+  await resetStoreForTests();
+});
 
 describe('createProject', () => {
   it('stores the script and returns an id', async () => {

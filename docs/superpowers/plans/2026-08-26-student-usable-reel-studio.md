@@ -2444,7 +2444,7 @@ npx vitest run lib/__tests__/engines.test.ts worker/__tests__/loop.test.ts
 
 `docs/superpowers/specs/2026-08-26-unified-video-studio-design.md`의 §5 코드 블록을 `prepare`/`submit`/`poll`에서 `produce(input, onProgress)` 형태로 바꾸고, 워커가 잡 생애를 소유하므로 이 형태가 된다는 한 문장을 덧붙인다.
 
-- [ ] **Step 8: 커밋**
+- [ ] **Step 9: 커밋**
 
 ```bash
 git add lib/engines worker docs/superpowers/specs
@@ -2769,9 +2769,35 @@ export async function POST(request: Request) {
 }
 ```
 
-- [ ] **Step 4: HeyGen 라우트 정리**
+- [ ] **Step 4: UI를 새 엔드포인트로 재배선**
 
-`app/api/video/generate/route.ts`를 삭제하고, `app/page.tsx`의 호출 대상을 `/api/projects`로 바꾼다. 진행률 폴링은 `/api/jobs/:id`를 쓴다.
+`app/page.tsx`(1,439줄)는 HeyGen 시절 흐름으로 짜여 있다. **UI를 재구성하지 않는다** — 호출 대상만
+바꾸고, 새 파이프라인에 맞지 않는 차단 조건을 푼다. 화면 정리는 계획 2의 일이다.
+
+바꿀 것은 셋뿐이다:
+
+1. **생성 요청**: `generateVideo()`의 `fetch('/api/video/generate', ...)`를
+   `fetch('/api/projects', { method:'POST', headers:{'Content-Type':'application/json'},
+   body: JSON.stringify({ script }) })`로 교체한다. 응답은 `{ projectId, jobId, status }`다.
+   TTS를 앱에서 먼저 부르던 블록(`/api/voicebox/generate` 호출)은 **제거한다** — 이제 워커가
+   파이프라인 전체를 돌린다.
+
+2. **진행률 폴링**: `pollVideoStatus()`의 `fetch(\`/api/video/status/${'$'}{nextJobId}\`)`를
+   `fetch(\`/api/jobs/${'$'}{nextJobId}\`)`로 바꾼다. 응답 형태는
+   `{ status, progress, resultUrl, error }`이므로 `data.videoUrl` 참조를 `data.resultUrl`로 고친다.
+
+3. **차단 조건 완화**: Remotion 경로는 아바타 사진도 목소리 등록도 필요 없다. `generateVideo()`
+   앞부분의 `!avatar.id` / `!hasVoiceInput` 조기 반환을 제거한다. 대본만 있으면 생성되어야 한다.
+   업로드 UI 자체는 그대로 둔다(계획 2에서 캐릭터 에셋으로 재사용).
+
+429(한도 초과)와 401(미인증) 응답은 `data.error`를 그대로 `setMessage()`로 보여준다.
+
+> **인증 UI는 이 Task가 아니다.** 초대코드 입력 화면은 Task 12에서 만든다. 지금은 쿠키가 없으면
+> `/api/projects`가 401을 반환하고 그 문구가 화면에 뜨는 것까지가 정상이다.
+
+- [ ] **Step 5: HeyGen 라우트와 죽은 코드 삭제**
+
+`app/page.tsx`가 더 이상 이것들을 호출하지 않는 것을 확인한 뒤에 지운다.
 
 ```bash
 git rm app/api/video/generate/route.ts app/api/video/status/\[jobId\]/route.ts
@@ -2780,16 +2806,17 @@ git rm lib/mock-jobs.ts lib/voicebox-client.ts
 git rm -r app/reels
 ```
 
-- [ ] **Step 5: 테스트 통과 확인**
+- [ ] **Step 6: 테스트 통과 확인**
 
 ```bash
 npx vitest run
 npx tsc --noEmit
+npx next build
 ```
 
 기대: 전체 PASS. 타입 에러가 있으면 삭제한 모듈을 참조하는 곳을 고친다.
 
-- [ ] **Step 6: 커밋**
+- [ ] **Step 7: 커밋**
 
 ```bash
 git add -A
@@ -2801,8 +2828,8 @@ git commit -m "feat: add project API with usage limit and remove HeyGen mock rou
 ## Task 12: 배포와 수강생 접속 확인
 
 **Files:**
-- Create: `lib/store/blob-store.ts`
-- Modify: `lib/store/index.ts` (구현체 선택 추가), `.env.example`, `lib/store/file-store.ts` (`kind` 추가)
+- Create: `lib/store/blob-store.ts`, `app/login/page.tsx`
+- Modify: `app/globals.css` (로그인 화면 스타일), `app/page.tsx` (401 → /login), `lib/store/index.ts` (구현체 선택 추가), `.env.example`, `lib/store/file-store.ts` (`kind` 추가)
 - Test: `lib/__tests__/store-select.test.ts`
 
 **Interfaces:**
@@ -2848,7 +2875,94 @@ WORKER_RUN=1 WORKER_TOKEN=<토큰> APP_URL=http://localhost:3000 npx tsx worker/
 
 브라우저에서 초대코드 입력 → 대본 입력 → 생성. 워커 로그에 잡이 잡히고 `.local-data/renders/`에 MP4가 생기는지 확인한다.
 
-- [ ] **Step 3: 초대코드 발급**
+- [ ] **Step 3: 초대코드 로그인 화면**
+
+Task 10이 `POST /api/auth`를 만들었지만 **화면이 없다.** 수강생이 코드를 넣을 곳이 필요하다.
+
+`app/login/page.tsx`:
+
+```tsx
+'use client';
+
+import { useState } from 'react';
+
+export default function LoginPage() {
+  const [code, setCode] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const response = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setError(data.error ?? '초대코드를 확인해주세요.');
+        return;
+      }
+      window.location.href = '/';
+    } catch {
+      setError('접속에 실패했습니다. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="loginShell">
+      <form className="loginCard" onSubmit={submit}>
+        <h1>오토사장</h1>
+        <p>수강생 초대코드를 입력해주세요.</p>
+        <input
+          value={code}
+          onChange={(event) => setCode(event.target.value)}
+          placeholder="초대코드"
+          autoComplete="off"
+          aria-label="초대코드"
+        />
+        <button type="submit" disabled={busy || !code.trim()}>
+          {busy ? '확인 중…' : '시작하기'}
+        </button>
+        {error && <p className="loginError">{error}</p>}
+      </form>
+    </main>
+  );
+}
+```
+
+`app/globals.css` 맨 아래에 최소 스타일을 더한다 — 기존 토큰(`--bg`, `--panel`, `--ink`,
+`--acid`, `--line`)을 쓰고 새 색을 만들지 않는다:
+
+```css
+.loginShell { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.loginCard { display: flex; flex-direction: column; gap: 16px; width: min(360px, 100%);
+  padding: 32px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; }
+.loginCard h1 { margin: 0; font-size: 28px; }
+.loginCard p { margin: 0; color: var(--muted); font-size: 14px; }
+.loginCard input { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line-strong);
+  background: var(--panel-2); color: var(--ink); }
+.loginCard button { padding: 12px 14px; border-radius: 10px; border: 0;
+  background: var(--acid); color: #0d0f10; font-weight: 700; cursor: pointer; }
+.loginCard button:disabled { opacity: .5; cursor: default; }
+.loginError { color: var(--pink); font-size: 13px; }
+```
+
+그리고 `app/page.tsx`에서 `/api/projects`가 401을 반환하면 `/login`으로 보낸다:
+
+```ts
+      if (response.status === 401) {
+        window.location.href = '/login';
+        return;
+      }
+```
+
+- [ ] **Step 4: 초대코드 발급**
 
 `.local-data/students.json`에 수강생 계정을 만든다. 코드는 `hashCode()`로 해시해서 넣는다.
 
@@ -2862,7 +2976,7 @@ console.log(JSON.stringify([
 " > .local-data/students.json
 ```
 
-- [ ] **Step 4: Blob 저장소 구현 — 이 Task의 실질적인 작업**
+- [ ] **Step 5: Blob 저장소 구현 — 이 Task의 실질적인 작업**
 
 **Vercel의 파일시스템은 쓰기가 되지 않는다.** `fileStore`는 로컬에서만 동작하므로 배포용 구현체가 필요하다.
 
@@ -2949,7 +3063,7 @@ npx vitest run   # 전체 통과 확인
 
 > **알려진 한계 — 동시 쓰기 경합**: 이 저장소는 읽기-수정-쓰기 방식이라 두 요청이 동시에 같은 키를 쓰면 한쪽이 덮인다. 수강생 20명·워커 1대 규모에서는 발생 확률이 낮지만 실재하는 결함이다. 프로젝트 생성이 유실되는 사례가 관측되면 Postgres(Vercel Postgres 또는 Supabase)로 교체한다. `Store` 인터페이스 뒤에 있으므로 교체 범위는 이 파일 하나다.
 
-- [ ] **Step 5: Vercel 배포**
+- [ ] **Step 6: Vercel 배포**
 
 ```bash
 npx vercel --prod
@@ -2970,7 +3084,7 @@ Vercel 프로젝트 설정에 등록할 환경변수:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-- [ ] **Step 6: 워커를 배포된 앱에 연결**
+- [ ] **Step 7: 워커를 배포된 앱에 연결**
 
 ```bash
 WORKER_RUN=1 WORKER_TOKEN=<토큰> APP_URL=https://<배포주소> npx tsx worker/index.ts
@@ -2978,7 +3092,7 @@ WORKER_RUN=1 WORKER_TOKEN=<토큰> APP_URL=https://<배포주소> npx tsx worker
 
 맥에서 상시 실행되도록 `launchd` 또는 `pm2`로 등록한다.
 
-- [ ] **Step 7: 수강생 1명으로 실제 확인**
+- [ ] **Step 8: 수강생 1명으로 실제 확인**
 
 배포 주소에 초대코드로 접속해서 릴스 1편을 끝까지 만든다. 실패하면 원인을 기록하고 고친다.
 

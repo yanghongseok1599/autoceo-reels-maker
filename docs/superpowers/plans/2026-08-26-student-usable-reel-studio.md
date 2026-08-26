@@ -2069,6 +2069,7 @@ git commit -m "feat: add style sheet presets and scene directive generation"
   - `remotionEngine: VideoEngine`
   - `getEngine(id: EngineId): VideoEngine`
   - `pollOnce(deps: PollDeps): Promise<'idle' | 'rendered' | 'failed'>`
+  - `makeProgressReporter(report): (jobId: string) => (pct: number) => void` — 거부를 삼켜 렌더를 보호한다
   - `renderReel(props: ReelProps, outPath: string): Promise<void>`
 
 - [ ] **Step 1: 실패하는 테스트 작성**
@@ -2139,6 +2140,25 @@ describe('pollOnce', () => {
     });
     expect(result).toBe('failed');
     expect(report).toHaveBeenCalledWith('job1', { status: 'failed', error: '렌더 실패' });
+  });
+
+  // 진행률 보고가 거부되면 워커가 죽으면 안 된다. void 만으로는 거부를 삼키지 못한다.
+  it('swallows a progress report that rejects', async () => {
+    const { makeProgressReporter } = await import('../index');
+    const report = vi.fn().mockRejectedValue(new Error('network blip'));
+    const onProgress = makeProgressReporter(report)('job1');
+
+    let unhandled: unknown = null;
+    const onUnhandled = (reason: unknown) => { unhandled = reason; };
+    process.on('unhandledRejection', onUnhandled);
+
+    expect(() => onProgress(50)).not.toThrow();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    process.off('unhandledRejection', onUnhandled);
+    expect(unhandled).toBeNull();
+    expect(report).toHaveBeenCalledWith('job1', { status: 'rendering', progress: 50 });
   });
 
   it('fails the job when the project is missing', async () => {
@@ -2352,6 +2372,19 @@ async function reportToApi(id: string, patch: Record<string, unknown>) {
   });
 }
 
+/**
+ * 진행률 보고는 실패해도 렌더를 죽이면 안 된다.
+ * `void`만으로는 부족하다 — 동기 예외만 막을 뿐 거부(rejection)는 그대로 새어나가고,
+ * Node 기본값(`--unhandled-rejections=throw`)에서는 렌더 도중 워커가 죽는다. `.catch`가 필요하다.
+ */
+export function makeProgressReporter(
+  report: (id: string, patch: Record<string, unknown>) => Promise<unknown>,
+) {
+  return (jobId: string) => (pct: number): void => {
+    void report(jobId, { status: 'rendering', progress: pct }).catch(() => {});
+  };
+}
+
 async function produceWithEngine(job: ClaimedJob, project: ClaimedProject) {
   await mkdir(RENDER_DIR, { recursive: true });
   return getEngine(job.engine).produce(
@@ -2362,7 +2395,7 @@ async function produceWithEngine(job: ClaimedJob, project: ClaimedProject) {
       voiceReferenceId: VOICE_ID,
       outPath: path.join(RENDER_DIR, `${job.id}.mp4`),
     },
-    (pct) => { void reportToApi(job.id, { status: 'rendering', progress: pct }); },
+    makeProgressReporter(reportToApi)(job.id),
   );
 }
 
@@ -2405,7 +2438,7 @@ if (process.env.WORKER_RUN === '1') {
 npx vitest run lib/__tests__/engines.test.ts worker/__tests__/loop.test.ts
 ```
 
-기대: 엔진 3개 + 루프 4개 = 7개 PASS
+기대: 엔진 3개 + 루프 5개 = 8개 PASS
 
 - [ ] **Step 7: 스펙 §5를 실제 인터페이스에 맞춰 갱신**
 

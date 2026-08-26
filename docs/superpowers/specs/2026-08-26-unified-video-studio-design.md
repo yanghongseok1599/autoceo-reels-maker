@@ -105,7 +105,7 @@ interface EngineInput {
   projectId: string
   ownerId: string
   script: string
-  voiceReferenceId: string    // BYOK 자격증명은 여기 담아 전달한다(3단계)
+  voiceReferenceId: string
   outPath: string
 }
 

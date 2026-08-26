@@ -75,7 +75,7 @@ export const RECOMMENDATION_MIN_SAMPLES = 10;
  * 문턱 아래에서 처방 대신 내보내는 문구. 수강생이 돈을 내고 보는 자리이므로 오류나 꾸중이
  * 아니라 "아직은 아니고, 무엇이 쌓이면 시작한다"로 읽혀야 한다.
  */
-const INSUFFICIENT = `아직 판단할 표본이 부족합니다. 좋은 결과·아쉬운 결과 평가가 ${RECOMMENDATION_MIN_SAMPLES}건 모이면 추천을 시작합니다.`;
+const INSUFFICIENT = `아직 판단할 표본이 부족합니다. 평가가 ${RECOMMENDATION_MIN_SAMPLES}건 모이고 그중 좋은 결과가 있으면 추천을 시작합니다.`;
 
 function createLearningId() {
   return `learn_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;

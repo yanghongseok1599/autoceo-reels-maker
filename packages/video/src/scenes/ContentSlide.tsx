@@ -69,6 +69,9 @@ export const ContentSlide: React.FC<{ scene: ContentSlideScene; palette: Palette
             <div style={{
               fontSize: 40, fontWeight: 600, fontFamily: "'Pretendard', sans-serif",
               color: palette.ink, lineHeight: 1.4, wordBreak: 'keep-all', overflowWrap: 'break-word',
+              // flex 자식의 기본 min-width:auto는 min-content로 풀린다. overflow-wrap은
+              // min-content 크기를 줄이지 않으므로 이게 없으면 긴 한글 덩어리가 프레임을 넘는다.
+              minWidth: 0,
               textShadow: `0 2px 12px ${palette.paper}e6`,
             }}>{bullet}</div>
           </div>

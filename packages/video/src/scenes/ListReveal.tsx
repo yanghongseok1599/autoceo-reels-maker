@@ -1,10 +1,9 @@
 import React from 'react';
 import { AbsoluteFill, Img, spring, useCurrentFrame, useVideoConfig, interpolate } from 'remotion';
 import type { ListRevealScene, Palette } from '../types';
-import { SPRING_PRESETS, getEntryExitOpacity, getExitBlur, getEntryExitScale } from '../utils/animations';
-
-/** 항목 i는 sceneFrame이 i * STAGGER_FRAMES를 넘을 때부터 나타난다 */
-const STAGGER_FRAMES = 8;
+import {
+  SPRING_PRESETS, getEntryExitOpacity, getExitBlur, getEntryExitScale, getStaggerTiming,
+} from '../utils/animations';
 
 export const ListReveal: React.FC<{ scene: ListRevealScene; palette: Palette }> = ({ scene, palette }) => {
   const frame = useCurrentFrame();
@@ -18,12 +17,15 @@ export const ListReveal: React.FC<{ scene: ListRevealScene; palette: Palette }> 
   const exitBlur = getExitBlur(sceneFrame, sceneDuration);
   const exitScale = getEntryExitScale(sceneFrame, sceneDuration, fps, 0.92, 1.04);
 
+  // 간격은 씬 길이에서 유도한다 — 항목이 몇 개든, 씬이 얼마나 짧든 마지막 항목이
+  // 퇴장 페이드 시작 전에 또렷해진다.
+  const { stagger, reveal } = getStaggerTiming(sceneDuration, scene.items.length);
   const itemOpacity = (i: number) =>
-    interpolate(sceneFrame, [i * STAGGER_FRAMES, i * STAGGER_FRAMES + 10], [0, 1], {
+    interpolate(sceneFrame, [i * stagger, i * stagger + reveal], [0, 1], {
       extrapolateLeft: 'clamp', extrapolateRight: 'clamp',
     });
   const itemX = (i: number) =>
-    interpolate(sceneFrame, [i * STAGGER_FRAMES, i * STAGGER_FRAMES + 12], [-40, 0], {
+    interpolate(sceneFrame, [i * stagger, i * stagger + reveal + 2], [-40, 0], {
       extrapolateLeft: 'clamp', extrapolateRight: 'clamp',
     });
 
@@ -77,6 +79,9 @@ export const ListReveal: React.FC<{ scene: ListRevealScene; palette: Palette }> 
             <div style={{
               fontSize: 40, fontWeight: 600, fontFamily: "'Pretendard', sans-serif",
               color: palette.ink, lineHeight: 1.35, wordBreak: 'keep-all', overflowWrap: 'break-word',
+              // flex 자식의 기본 min-width:auto는 min-content로 풀린다. overflow-wrap은
+              // min-content 크기를 줄이지 않으므로 이게 없으면 긴 한글 덩어리가 프레임을 넘는다.
+              minWidth: 0,
               textShadow: `0 2px 12px ${palette.paper}e6`,
             }}>{item}</div>
           </div>

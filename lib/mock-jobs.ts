@@ -2,6 +2,7 @@ export type MockVideoJob = {
   id: string;
   createdAt: number;
   videoUrl: string;
+  learningRecordId?: string;
 };
 
 const store = globalThis as typeof globalThis & {

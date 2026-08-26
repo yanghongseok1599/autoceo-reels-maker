@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createId, mockJobs } from "@/lib/mock-jobs";
+import { createLearningRecord } from "@/lib/learning-store";
 
 type GeneratePayload = {
   format?: "format_a" | "format_d";
@@ -11,6 +12,12 @@ type GeneratePayload = {
   audioFileName?: string;
   poseGuideName?: string;
   referenceNames?: string[];
+  duration?: string;
+  quality?: string;
+  platform?: string;
+  speakingSpeed?: number;
+  tone?: string;
+  captionMode?: string;
 };
 
 export async function POST(request: Request) {
@@ -30,14 +37,27 @@ export async function POST(request: Request) {
     }
 
     const jobId = createId("mock_seedance");
+    const learningRecord = await createLearningRecord({
+      jobId,
+      format: "format_d",
+      script: payload.script,
+      duration: payload.duration,
+      quality: payload.quality,
+      platform: payload.platform,
+      captionMode: payload.captionMode,
+      poseGuideName: payload.poseGuideName,
+      referenceNames: payload.referenceNames,
+    });
     mockJobs.set(jobId, {
       id: jobId,
       createdAt: Date.now(),
       videoUrl: `mock://autosajang/format-d/${jobId}.mp4`,
+      learningRecordId: learningRecord.id,
     });
 
     return NextResponse.json({
       jobId,
+      learningRecordId: learningRecord.id,
       status: "processing",
       provider: "seedance_2_0_mock",
       mode: "mock",
@@ -66,14 +86,28 @@ export async function POST(request: Request) {
 
   if (!process.env.HEYGEN_API_KEY) {
     const jobId = createId("mock_video");
+    const learningRecord = await createLearningRecord({
+      jobId,
+      format: "format_a",
+      script: payload.script,
+      duration: payload.duration,
+      quality: payload.quality,
+      platform: payload.platform,
+      speakingSpeed: payload.speakingSpeed,
+      tone: payload.tone,
+      captionMode: payload.captionMode,
+      inputMode: payload.inputMode,
+    });
     mockJobs.set(jobId, {
       id: jobId,
       createdAt: Date.now(),
       videoUrl: `mock://autosajang/${jobId}.mp4`,
+      learningRecordId: learningRecord.id,
     });
 
     return NextResponse.json({
       jobId,
+      learningRecordId: learningRecord.id,
       status: "processing",
       mode: "mock",
     });

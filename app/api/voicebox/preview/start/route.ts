@@ -1,20 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { synthesizeFishSpeech } from "@/lib/fish-audio-client";
-import type { Language, VoiceEngine } from "@/lib/voicebox-types";
+import type { Language } from "@/lib/voicebox-types";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 600;
+export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as {
     text?: string;
     profileId?: string;
     language?: Language;
-    engine?: VoiceEngine;
-    modelSize?: "1.7B" | "0.6B" | "1B" | "3B";
-    seed?: number;
     instruct?: string;
-    speakingSpeed?: number;
   };
 
   if (!body.text?.trim()) {
@@ -28,9 +24,12 @@ export async function POST(request: NextRequest) {
   const result = await synthesizeFishSpeech({
     text: body.text,
     referenceId: body.profileId,
-    speakingSpeed: body.speakingSpeed,
     instruct: body.instruct,
   });
 
-  return NextResponse.json(result, { status: result.status === "error" ? 502 : 200 });
+  if (result.status === "error" || !result.generationId) {
+    return NextResponse.json(result, { status: 502 });
+  }
+
+  return NextResponse.json({ generationId: result.generationId, status: "completed", audioUrl: result.audioUrl });
 }

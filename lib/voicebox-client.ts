@@ -6,10 +6,12 @@ import type {
   VoiceProfile,
   VoiceboxGenerateRequest,
   VoiceboxGenerateResponse,
+  VoiceboxStartResponse,
+  VoiceboxStatusResponse,
 } from "@/lib/voicebox-types";
 
-export const KOREAN_ENGINE: VoiceEngine = "qwen_custom_voice";
-export const KOREAN_MODEL_SIZE = "0.6B" as const;
+export const KOREAN_ENGINE: VoiceEngine = "qwen";
+export const KOREAN_MODEL_SIZE = "1.7B" as const;
 
 function jsonHeaders(extra?: Record<string, string>) {
   const headers: Record<string, string> = {
@@ -197,14 +199,35 @@ export async function addProfileSample(profileId: string, audio: Blob, filename:
   }
 }
 
-function engineForProfile(profile: VoiceProfile): { engine: VoiceEngine; modelSize?: "0.6B" } {
+function isVoiceEngine(value: string | null | undefined): value is VoiceEngine {
+  return (
+    value === "qwen" ||
+    value === "qwen_custom_voice" ||
+    value === "luxtts" ||
+    value === "chatterbox" ||
+    value === "chatterbox_turbo" ||
+    value === "tada" ||
+    value === "kokoro"
+  );
+}
+
+function engineForProfile(profile: VoiceProfile): {
+  engine: VoiceEngine;
+  modelSize?: VoiceboxGenerateRequest["modelSize"];
+} {
   if (profile.voiceType === "cloned" || profile.voiceType === "designed") {
     return { engine: "chatterbox" };
   }
 
+  const engine = isVoiceEngine(profile.defaultEngine)
+    ? profile.defaultEngine
+    : isVoiceEngine(profile.presetEngine)
+      ? profile.presetEngine
+      : KOREAN_ENGINE;
+
   return {
-    engine: (profile.presetEngine as VoiceEngine) ?? KOREAN_ENGINE,
-    modelSize: KOREAN_MODEL_SIZE,
+    engine,
+    modelSize: engine === "qwen" || engine === "qwen_custom_voice" ? KOREAN_MODEL_SIZE : undefined,
   };
 }
 
@@ -223,12 +246,7 @@ async function getGenerationSnapshot(id: string): Promise<GenerationState> {
   return (await response.json()) as GenerationState;
 }
 
-export async function generateSpeech(
-  request: VoiceboxGenerateRequest,
-  options: { pollMs?: number; timeoutMs?: number } = {},
-): Promise<VoiceboxGenerateResponse> {
-  const pollMs = options.pollMs ?? 3000;
-  const timeoutMs = options.timeoutMs ?? 9 * 60 * 1000;
+async function buildGenerateBody(request: VoiceboxGenerateRequest): Promise<Record<string, unknown>> {
   const profile = await getProfile(request.profileId);
   const picked = profile ? engineForProfile(profile) : { engine: KOREAN_ENGINE, modelSize: KOREAN_MODEL_SIZE };
   const engine = request.engine ?? picked.engine;
@@ -246,6 +264,75 @@ export async function generateSpeech(
   };
   if (modelSize) body.model_size = modelSize;
   if (typeof request.seed === "number") body.seed = request.seed;
+  if (request.instruct) body.instruct = request.instruct;
+  return body;
+}
+
+export async function startSpeech(request: VoiceboxGenerateRequest): Promise<VoiceboxStartResponse> {
+  const body = await buildGenerateBody(request);
+
+  try {
+    const response = await vbFetch(
+      "/generate",
+      {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify(body),
+      },
+      30000,
+    );
+
+    if (!response.ok) {
+      return {
+        generationId: "",
+        status: "error",
+        error: `Voicebox /generate HTTP ${response.status}: ${await response.text()}`,
+      };
+    }
+
+    const state = (await response.json()) as GenerationState;
+    return { generationId: state.id, status: (state.status || "").toLowerCase() };
+  } catch (error) {
+    return {
+      generationId: "",
+      status: "error",
+      error: `Voicebox 연결 실패: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+export async function getSpeechStatus(id: string): Promise<VoiceboxStatusResponse> {
+  try {
+    const response = await vbFetch(`/history/${id}`);
+    if (!response.ok) {
+      return { status: "error", audioUrl: "", error: `history HTTP ${response.status}` };
+    }
+
+    const data = (await response.json()) as GenerationState;
+    const status = (data.status || "").toLowerCase();
+    const done = status === "completed" || status === "done" || status === "ready";
+
+    return {
+      status,
+      audioUrl: done ? `${env.voiceboxBaseUrl}/audio/${id}` : "",
+      error: data.error ?? "",
+    };
+  } catch (error) {
+    return {
+      status: "error",
+      audioUrl: "",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function generateSpeech(
+  request: VoiceboxGenerateRequest,
+  options: { pollMs?: number; timeoutMs?: number } = {},
+): Promise<VoiceboxGenerateResponse> {
+  const pollMs = options.pollMs ?? 3000;
+  const timeoutMs = options.timeoutMs ?? 9 * 60 * 1000;
+  const body = await buildGenerateBody(request);
 
   let state: GenerationState;
   try {

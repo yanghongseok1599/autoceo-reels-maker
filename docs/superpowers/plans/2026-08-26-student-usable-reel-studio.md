@@ -1517,14 +1517,41 @@ git commit -m "feat: add worker job claim and report routes"
   - `transcribeToSubtitles(audioPath: string): Promise<SubtitleJSON>`
   - `parseWhisperJson(raw: unknown): SubtitleJSON`
 
-STT는 워커(맥)에서 `whisper.cpp`를 로컬 실행한다. 사전 설치가 필요하다:
+STT는 워커(맥)에서 `whisper.cpp`를 로컬 실행한다.
 
 ```bash
 brew install whisper-cpp
-whisper-cpp --version
+whisper-cli --help | head -1
 ```
 
-모델은 `ggml-base` 이상을 쓴다. 한국어 정확도가 낮으면 `ggml-medium`으로 올린다.
+> **바이너리 이름은 `whisper-cli`다.** whisper.cpp가 `main`을 `whisper-cli`로 개명했고 Homebrew의
+> `whisper-cpp` 포뮬러가 설치하는 실행 파일도 그 이름이다. `whisper-cpp`라는 명령은 존재하지 않는다.
+> 코드에서는 `WHISPER_BIN` 환경변수로 바꿀 수 있게 두되 기본값을 `whisper-cli`로 한다.
+
+**모델은 절대 경로로 지정한다.** `WHISPER_MODEL`이 없으면 명확한 오류를 던지고 멈춘다 —
+파일명만 적어두면 "모델을 찾을 수 없다"는 암호 같은 실패가 난다. 모델이 없으면 받는다:
+
+```bash
+mkdir -p .local-data/whisper
+curl -L -o .local-data/whisper/ggml-base.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+```
+
+한국어 정확도가 부족하면 `ggml-small.bin` 이상으로 올린다.
+
+### 실측으로 확인된 것 (2026-08-26, whisper-cpp 1.9.1)
+
+이 세 가지는 실제로 돌려서 확인했다. 계획의 초안은 전부 틀렸었다.
+
+| 항목 | 결과 |
+|---|---|
+| mp3 직접 입력 | **된다.** ffmpeg 내장 빌드라 wav 변환이 불필요하다 |
+| `-oj` (output-json) | **`tokens` 필드를 주지 않는다.** 단어 타이밍을 못 얻는다 |
+| `-ojf` (output-json-full) | **`tokens`를 준다.** 이걸 써야 한다 |
+| `-ml 1` (max-len 1) | **한국어 UTF-8을 깨뜨린다.** 멀티바이트 문자를 바이트 경계에서 자른다 → `JSON.parse` 실패 |
+
+`-ml`을 쓰지 않으면 세그먼트가 문장 단위로 나오고 그 안의 `tokens`가 단어 단위가 된다 —
+`SubtitleSegment`(문장) + `words`(단어)라는 우리 모델과 정확히 맞는다.
 
 - [ ] **Step 1: 실패하는 테스트 작성**
 
@@ -1534,14 +1561,19 @@ whisper-cpp --version
 import { describe, it, expect } from 'vitest';
 import { parseWhisperJson } from '../pipeline/stt';
 
+// 실제 whisper-cli 1.9.1 `-ojf` 출력에서 가져온 구조다. 특수 토큰 두 종류가 섞여 나온다.
 const whisperOutput = {
   transcription: [
     {
-      text: ' 무릎 통증',
-      offsets: { from: 0, to: 1400 },
+      timestamps: { from: '00:00:00,000', to: '00:00:04,900' },
+      offsets: { from: 0, to: 4900 },
+      text: ' 저는 운동을 좋아해서 뛰어요.',
       tokens: [
-        { text: ' 무릎', offsets: { from: 0, to: 700 } },
-        { text: ' 통증', offsets: { from: 700, to: 1400 } },
+        { text: '[_BEG_]', offsets: { from: 0, to: 0 } },
+        { text: ' 저는', offsets: { from: 130, to: 550 } },
+        { text: ' 운동', offsets: { from: 870, to: 1160 } },
+        { text: '을', offsets: { from: 1160, to: 1380 } },
+        { text: '[_TT_245]', offsets: { from: 4900, to: 4900 } },
       ],
     },
   ],
@@ -1551,23 +1583,37 @@ describe('parseWhisperJson', () => {
   it('converts milliseconds to seconds', () => {
     const [seg] = parseWhisperJson(whisperOutput);
     expect(seg.start).toBe(0);
-    expect(seg.end).toBe(1.4);
+    expect(seg.end).toBe(4.9);
   });
 
-  it('extracts word-level timings', () => {
+  it('extracts word-level timings from tokens', () => {
     const [seg] = parseWhisperJson(whisperOutput);
-    expect(seg.words).toHaveLength(2);
-    expect(seg.words[0].word).toBe('무릎');
-    expect(seg.words[1].start).toBe(0.7);
+    expect(seg.words[0]).toEqual({ word: '저는', start: 0.13, end: 0.55 });
+    expect(seg.words[1].word).toBe('운동');
+  });
+
+  // whisper는 [_BEG_]와 [_TT_245] 같은 제어 토큰을 단어 사이에 섞어 낸다.
+  // 거르지 않으면 자막에 그대로 찍힌다.
+  it("filters whisper's special tokens", () => {
+    const [seg] = parseWhisperJson(whisperOutput);
+    const words = seg.words.map((w) => w.word);
+    expect(words).not.toContain('[_BEG_]');
+    expect(words).not.toContain('[_TT_245]');
+    expect(words).toEqual(['저는', '운동', '을']);
   });
 
   it('trims surrounding whitespace from text', () => {
-    expect(parseWhisperJson(whisperOutput)[0].text).toBe('무릎 통증');
+    expect(parseWhisperJson(whisperOutput)[0].text).toBe('저는 운동을 좋아해서 뛰어요.');
   });
 
   it('returns an empty array for malformed input', () => {
     expect(parseWhisperJson({})).toEqual([]);
     expect(parseWhisperJson(null)).toEqual([]);
+  });
+
+  it('survives a segment with no tokens at all', () => {
+    const noTokens = { transcription: [{ offsets: { from: 0, to: 1000 }, text: '무음' }] };
+    expect(parseWhisperJson(noTokens)[0].words).toEqual([]);
   });
 });
 ```
@@ -1592,6 +1638,9 @@ import type { SubtitleJSON, SubtitleSegment } from '@studio/video/src/types';
 
 const run = promisify(execFile);
 
+/** whisper.cpp가 단어 사이에 섞어 내는 제어 토큰: [_BEG_], [_TT_245] 등 */
+const SPECIAL_TOKEN = /^\[.*\]$/;
+
 interface WhisperToken { text: string; offsets: { from: number; to: number } }
 interface WhisperSegment { text: string; offsets: { from: number; to: number }; tokens?: WhisperToken[] }
 
@@ -1605,17 +1654,34 @@ export function parseWhisperJson(raw: unknown): SubtitleJSON {
     start: seg.offsets.from / 1000,
     end: seg.offsets.to / 1000,
     words: (seg.tokens ?? [])
-      .map((t) => ({ word: t.text.trim(), start: t.offsets.from / 1000, end: t.offsets.to / 1000 }))
-      .filter((w) => w.word.length > 0),
+      .map((token) => ({
+        word: token.text.trim(),
+        start: token.offsets.from / 1000,
+        end: token.offsets.to / 1000,
+      }))
+      .filter((w) => w.word.length > 0 && !SPECIAL_TOKEN.test(w.word)),
   }));
 }
 
 export async function transcribeToSubtitles(audioPath: string): Promise<SubtitleJSON> {
+  const model = process.env.WHISPER_MODEL;
+  if (!model) {
+    throw new Error(
+      'WHISPER_MODEL이 설정되지 않았습니다. ggml 모델 파일의 절대 경로를 지정해주세요.',
+    );
+  }
+
   const outPrefix = `${audioPath}.whisper`;
-  await run('whisper-cpp', [
-    '-m', process.env.WHISPER_MODEL ?? 'ggml-base.bin',
-    '-l', 'ko', '-oj', '-ml', '1', '-of', outPrefix, '-f', audioPath,
+  await run(process.env.WHISPER_BIN ?? 'whisper-cli', [
+    '-m', model,
+    '-l', 'ko',
+    // -ojf 여야 한다. -oj 는 tokens 를 주지 않아 단어 타이밍을 못 얻는다.
+    '-ojf',
+    // -ml 은 쓰지 않는다. -ml 1 은 한국어 멀티바이트 문자를 바이트 경계에서 잘라 JSON을 깨뜨린다.
+    '-of', outPrefix,
+    '-f', audioPath,
   ]);
+
   return parseWhisperJson(JSON.parse(await readFile(`${outPrefix}.json`, 'utf8')));
 }
 ```
@@ -1646,15 +1712,18 @@ export async function synthesizeNarration(input: {
 npx vitest run lib/__tests__/stt.test.ts
 ```
 
-기대: 4개 PASS
+기대: 6개 PASS
 
 - [ ] **Step 5: whisper가 실제로 도는지 수동 확인**
 
 ```bash
-whisper-cpp -m ggml-base.bin -l ko -oj -ml 1 -of /tmp/t -f <실제_음성.wav> && head -40 /tmp/t.json
+WHISPER_MODEL=<모델_절대경로>
+whisper-cli -m "$WHISPER_MODEL" -l ko -ojf -of /tmp/t -f .local-data/higgsfield-pilot/00_voice_clone_reference.mp3
+python3 -c "import json;d=json.load(open('/tmp/t.json'));s=d['transcription'][0];print(list(s.keys()));print(s['tokens'][:4])"
 ```
 
-기대: `transcription` 배열에 `offsets`와 `tokens`가 들어 있다. 형식이 다르면 `parseWhisperJson`과 테스트를 실제 출력에 맞춰 고친다.
+기대: 세그먼트 키에 `tokens`가 있고, 각 토큰에 `text`와 `offsets`가 있다. JSON이 UTF-8로 열려야 한다.
+저장소에 실제 한국어 음성(`.local-data/higgsfield-pilot/00_voice_clone_reference.mp3`)이 있으니 그걸 쓴다.
 
 - [ ] **Step 6: 커밋**
 

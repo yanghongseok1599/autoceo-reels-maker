@@ -1242,7 +1242,8 @@ git commit -m "feat: add persistent store layer with job queue and projects"
 ## Task 6: 워커 API 라우트
 
 **Files:**
-- Create: `app/api/jobs/next/route.ts`, `app/api/jobs/[id]/route.ts`
+- Create: `app/api/jobs/next/route.ts`, `app/api/jobs/[id]/route.ts`, `vitest.setup.ts`
+- Modify: `vitest.config.ts` (`setupFiles` 추가)
 - Test: `app/api/__tests__/jobs-route.test.ts`
 
 **Interfaces:**
@@ -1252,7 +1253,45 @@ git commit -m "feat: add persistent store layer with job queue and projects"
   - `PATCH /api/jobs/:id` — 헤더 `x-worker-token`. 본문 `{ status?, progress?, resultUrl?, error? }`
   - `assertWorker(request: Request): boolean`
 
-- [ ] **Step 1: 실패하는 테스트 작성**
+- [ ] **Step 1: 테스트 전역 격리 — 어떤 테스트도 실제 데이터를 못 건드리게**
+
+Task 5는 테스트 파일마다 `STORE_DIR`을 임시 디렉터리로 돌렸다. 그 방식은 **저자가 매번 기억해야
+한다** — 이 계획에만 이미 세 파일이 빠뜨렸다. 하네스 차원에서 보장한다.
+
+`vitest.setup.ts` 생성:
+
+```ts
+import { mkdtempSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { beforeEach } from 'vitest';
+
+// 어떤 테스트도 사용자의 실제 .local-data/를 건드리지 않는다.
+// 거기엔 학습 기록과 파일럿 산출물이 들어 있다.
+beforeEach(() => {
+  process.env.STORE_DIR = mkdtempSync(path.join(os.tmpdir(), 'reels-store-'));
+});
+```
+
+`vitest.config.ts`의 `test` 블록에 추가:
+
+```ts
+    setupFiles: ['./vitest.setup.ts'],
+```
+
+전역 훅이 파일별 `beforeEach`보다 먼저 돌므로, `resetStoreForTests()`는 이미 임시 디렉터리를
+가리킨 상태에서 실행된다.
+
+```bash
+md5 -q .local-data/learning-records.json          # 실행 전 기록
+npx vitest run
+md5 -q .local-data/learning-records.json          # 같아야 한다
+git status --porcelain .local-data                # 비어 있어야 한다
+```
+
+기대: 기존 29개 전부 통과, 실제 데이터 불변.
+
+- [ ] **Step 2: 실패하는 테스트 작성**
 
 `app/api/__tests__/jobs-route.test.ts`:
 
@@ -1305,7 +1344,7 @@ describe('POST /api/jobs/next', () => {
 });
 ```
 
-- [ ] **Step 2: 테스트가 실패하는지 확인**
+- [ ] **Step 3: 테스트가 실패하는지 확인**
 
 ```bash
 npx vitest run app/api/__tests__/jobs-route.test.ts
@@ -1313,7 +1352,7 @@ npx vitest run app/api/__tests__/jobs-route.test.ts
 
 기대: FAIL — 모듈 없음
 
-- [ ] **Step 3: 라우트 구현**
+- [ ] **Step 4: 라우트 구현**
 
 `app/api/jobs/next/route.ts`:
 
@@ -1371,7 +1410,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 }
 ```
 
-- [ ] **Step 4: 테스트 통과 확인**
+- [ ] **Step 5: 테스트 통과 확인**
 
 ```bash
 npx vitest run app/api/__tests__/jobs-route.test.ts
@@ -1379,10 +1418,10 @@ npx vitest run app/api/__tests__/jobs-route.test.ts
 
 기대: 4개 PASS
 
-- [ ] **Step 5: 커밋**
+- [ ] **Step 6: 커밋**
 
 ```bash
-git add app/api/jobs app/api/__tests__
+git add app/api/jobs app/api/__tests__ vitest.setup.ts vitest.config.ts
 git commit -m "feat: add worker job claim and report routes"
 ```
 

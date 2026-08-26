@@ -31,7 +31,28 @@ export function renderScene(scene: SceneDirective, palette: Palette): React.Reac
   }
 }
 
-export const SceneRouter: React.FC<{ scenes: SceneDirective[]; palette: Palette }> = ({ scenes, palette }) => {
+/**
+ * `types.ts`의 `SceneBase.backgroundImageUrl` 주석이 약속한 폴백을 실제로 적용한다:
+ * 씬에 배경이 없으면 릴 전체 배경(`ReelProps.backgroundImageUrl`)을 쓴다. 씬 쪽 값이 있으면
+ * 그대로 두고, 릴 배경마저 없으면 각 씬 컴포넌트가 팔레트 그라디언트로 대체한다.
+ *
+ * 폴백을 여기서 먹이는 이유는 씬 컴포넌트가 릴 단위 값을 알 필요가 없기 때문이다 —
+ * 컴포넌트는 받은 씬 하나만 그린다.
+ */
+export function withReelBackground(
+  scene: SceneDirective,
+  reelBackgroundImageUrl?: string,
+): SceneDirective {
+  if (scene.backgroundImageUrl || !reelBackgroundImageUrl) return scene;
+  return { ...scene, backgroundImageUrl: reelBackgroundImageUrl };
+}
+
+export const SceneRouter: React.FC<{
+  scenes: SceneDirective[];
+  palette: Palette;
+  /** 씬에 배경이 없을 때 쓰는 릴 전체 배경 */
+  backgroundImageUrl?: string;
+}> = ({ scenes, palette, backgroundImageUrl }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const active = findActiveScene(scenes, frame / fps);
@@ -39,7 +60,7 @@ export const SceneRouter: React.FC<{ scenes: SceneDirective[]; palette: Palette 
 
   return (
     <AbsoluteFill>
-      {renderScene(active, palette)}
+      {renderScene(withReelBackground(active, backgroundImageUrl), palette)}
     </AbsoluteFill>
   );
 };

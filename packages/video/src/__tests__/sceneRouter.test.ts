@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findActiveScene, renderScene } from '../scenes/SceneRouter';
+import { findActiveScene, renderScene, withReelBackground } from '../scenes/SceneRouter';
 import type { SceneDirective } from '../types';
 import { FALLBACK_PALETTE, SCENE_TYPES } from '../types';
 
@@ -28,29 +28,54 @@ describe('findActiveScene', () => {
   });
 });
 
+const base = { startTime: 0, endTime: 3 };
+
+/**
+ * 타입별 최소 씬 하나씩. `Record<SceneDirective['type'], …>`이라 SCENE_TYPES에 타입이
+ * 늘면 여기 빠진 항목이 곧바로 타입 에러가 된다.
+ */
+const sample: Record<SceneDirective['type'], SceneDirective> = {
+  title_card: { ...base, type: 'title_card', title: 'ㄱ' },
+  content_slide: { ...base, type: 'content_slide', heading: 'ㄱ', bullets: ['a'] },
+  emphasis: { ...base, type: 'emphasis', keyword: 'ㄱ' },
+  list_reveal: { ...base, type: 'list_reveal', title: 'ㄱ', items: ['a'] },
+  quote: { ...base, type: 'quote', quote: 'ㄱ' },
+  conclusion: { ...base, type: 'conclusion', heading: 'ㄱ' },
+};
+
 describe('renderScene', () => {
-  const base = { startTime: 0, endTime: 3 };
-
-  it('returns an element for every scene type', () => {
-    const cases = [
-      { ...base, type: 'title_card', title: 'ㄱ' },
-      { ...base, type: 'content_slide', heading: 'ㄱ', bullets: ['a'] },
-      { ...base, type: 'emphasis', keyword: 'ㄱ' },
-      { ...base, type: 'list_reveal', title: 'ㄱ', items: ['a'] },
-      { ...base, type: 'quote', quote: 'ㄱ' },
-      { ...base, type: 'conclusion', heading: 'ㄱ' },
-    ] as const;
-
-    for (const scene of cases) {
-      expect(renderScene(scene as never, FALLBACK_PALETTE)).not.toBeNull();
+  /**
+   * SCENE_TYPES를 직접 돌면서 각 타입이 실제로 엘리먼트를 돌려주는지 본다. 목록에만 있고
+   * renderScene에 분기가 없는 타입은 여기서 null로 떨어져 잡힌다.
+   */
+  it('returns an element for every type listed in SCENE_TYPES', () => {
+    for (const type of SCENE_TYPES) {
+      expect(renderScene(sample[type], FALLBACK_PALETTE)).not.toBeNull();
     }
-  });
-
-  it('covers every type listed in SCENE_TYPES', () => {
-    expect(SCENE_TYPES.length).toBe(6);
   });
 
   it('returns null for an unknown type', () => {
     expect(renderScene({ ...base, type: 'nope' } as never, FALLBACK_PALETTE)).toBeNull();
+  });
+});
+
+/**
+ * types.ts는 "씬에 배경이 없으면 ReelProps.backgroundImageUrl을 쓴다"고 적어 두었다.
+ * 그 문장을 참으로 만드는 함수다 — 예전에는 아무도 그 prop을 읽지 않았다.
+ */
+describe('withReelBackground', () => {
+  it('fills an empty scene background from the reel background', () => {
+    expect(withReelBackground(sample.title_card, '/reel.png').backgroundImageUrl)
+      .toBe('/reel.png');
+  });
+
+  it('leaves a scene that already has its own background alone', () => {
+    const own = { ...sample.title_card, backgroundImageUrl: '/scene.png' };
+    expect(withReelBackground(own, '/reel.png')).toBe(own);
+  });
+
+  it('leaves the scene alone when there is no reel background either', () => {
+    expect(withReelBackground(sample.title_card, undefined)).toBe(sample.title_card);
+    expect(withReelBackground(sample.title_card, undefined).backgroundImageUrl).toBeUndefined();
   });
 });

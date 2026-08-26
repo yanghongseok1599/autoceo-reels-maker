@@ -5,6 +5,7 @@ import { STYLE_PRESETS } from '../style-sheet';
 import { getStaggerTiming } from '@studio/video/src/utils/animations';
 import type {
   SubtitleJSON, SceneDirective, TitleCardScene, ListRevealScene, ContentSlideScene,
+  ConclusionScene,
 } from '@studio/video/src/types';
 
 /** SceneDirective 유니온에서 title_card만 좁힌다 — 다른 씬 타입에는 title이 없다 */
@@ -15,6 +16,11 @@ function asTitleCard(scene: SceneDirective): TitleCardScene {
 
 function asList(scene: SceneDirective): ListRevealScene {
   if (scene.type !== 'list_reveal') throw new Error(`list_reveal이 아님: ${scene.type}`);
+  return scene;
+}
+
+function asConclusion(scene: SceneDirective): ConclusionScene {
+  if (scene.type !== 'conclusion') throw new Error(`conclusion이 아님: ${scene.type}`);
   return scene;
 }
 
@@ -40,6 +46,11 @@ function primaryText(scene: SceneDirective): string {
 
 const seg = (id: number, text: string) => ({ id, text, start: id, end: id + 1, words: [] });
 const subs = (...texts: string[]): SubtitleJSON => texts.map((t, i) => seg(i, t));
+
+/** lib/pipeline/scenes.ts의 MAX_HEADLINE. 표제 카드 한 필드가 담는 최대 길이 */
+const HEADLINE_LIMIT = 64;
+
+const wordsOf = (text: string): string[] => text.split(/\s+/).filter(Boolean);
 
 const sheet = {
   ...STYLE_PRESETS.paper,
@@ -67,10 +78,24 @@ describe('buildScenes', () => {
     expect(scenes[0].endTime).toBeGreaterThan(0);
   });
 
-  it('truncates a very long title', () => {
+  /**
+   * 대본 전체를 카드 한 장에 담을 방법은 없다. 이 자리에서만은 자르는 게 맞고, 대신
+   * 어절 한가운데를 끊지 않고 잘렸다는 표시(말줄임표)를 남긴다.
+   */
+  it('cuts a whole-script fallback title at a word boundary and marks it', () => {
     const long = 'ㄱ'.repeat(200);
     expect(asTitleCard(buildScenes({ subtitles: [], script: long, sheet })[0]).title.length)
-      .toBeLessThanOrEqual(40);
+      .toBeLessThanOrEqual(HEADLINE_LIMIT);
+
+    const words = Array.from({ length: 60 }, (_, i) => `낱말${i}`);
+    const title = asTitleCard(
+      buildScenes({ subtitles: [], script: words.join(' '), sheet })[0],
+    ).title;
+    expect(title.endsWith('…')).toBe(true);
+    // 잘린 자리 앞은 언제나 온전한 어절이다 — `낱말1` 이 `낱말` 로 끝나면 안 된다
+    for (const word of title.slice(0, -1).trim().split(' ')) {
+      expect(words).toContain(word);
+    }
   });
 
   it('makes one scene per subtitle segment', () => {
@@ -305,6 +330,70 @@ describe('buildScenes — 본문 슬라이드', () => {
     expect(scene.heading).not.toBe('');
     expect(scene.heading.length).toBeLessThanOrEqual(40);
     expect(`${scene.heading} ${scene.bullets.join(' ')}`).toBe(line);
+  });
+});
+
+/**
+ * 릴스에서 가장 오래 보이는 첫 프레임과 마지막 프레임이다. 여기서 문장 끝이 조용히
+ * 사라지면 화면만 봐서는 아무 이상이 없어 보인다 — 저장된 whisper 전사 세 건이 모두
+ * 이 자리에서 글자를 잃고 있었다. content_slide와 같은 규칙을 쓴다: 어절 경계에서 자르고
+ * 꼬리는 버리지 않는다. 담을 곳도 이미 있다 — TitleCard의 `subtitle`과
+ * ConclusionSlide의 `callToAction`은 선언돼 있고 렌더까지 되지만 늘 비어 있었다.
+ */
+describe('buildScenes — 표제 카드', () => {
+  /** public/generated-audio의 실제 whisper 전사에서 그대로 가져온 세그먼트(44·46·50자) */
+  const REAL_SEGMENTS = [
+    '오늘은 스쿼트 할 때 무릎이 안쪽으로 모이는 문제를 잡는 간단한 팁을 알려드릴게요.',
+    '발바닥을 바닥에 고르게 누르고 내려갈 때 무릎이 두 번째 발가락 방향을 따라가게 해보세요.',
+    '안녕하세요 오늘은 제가 실제로 쓰고 있는 AI 자동화 세팅을 그대로 보여드릴께요',
+  ];
+
+  const LONG = '오늘은 스쿼트를 할 때 무릎이 안쪽으로 자꾸 모이는 아주 흔한 문제를 바로잡는 간단한 팁을 지금부터 하나씩 차근차근 알려드릴게요';
+
+  it('keeps a real whisper segment whole on the opening frame', () => {
+    for (const line of REAL_SEGMENTS) {
+      const card = asTitleCard(
+        buildScenes({ subtitles: subs(line, '끝'), script: '대본', sheet })[0],
+      );
+      expect(card.title).toBe(line);
+      expect(card.subtitle).toBeUndefined();
+    }
+  });
+
+  it('keeps a real whisper segment whole on the closing frame', () => {
+    for (const line of REAL_SEGMENTS) {
+      const scenes = buildScenes({ subtitles: subs('제목', line), script: '대본', sheet });
+      const card = asConclusion(scenes[scenes.length - 1]);
+      expect(card.heading).toBe(line);
+      expect(card.callToAction).toBeUndefined();
+    }
+  });
+
+  it('moves an overflowing opening line into the subtitle instead of dropping it', () => {
+    const card = asTitleCard(buildScenes({ subtitles: subs(LONG, '끝'), script: '대본', sheet })[0]);
+    expect(card.title).not.toBe('');
+    expect(card.title.length).toBeLessThanOrEqual(HEADLINE_LIMIT);
+    expect(card.subtitle).toBeTruthy();
+    expect(wordsOf(`${card.title} ${card.subtitle}`)).toEqual(wordsOf(LONG));
+  });
+
+  it('moves an overflowing closing line into the call to action instead of dropping it', () => {
+    const scenes = buildScenes({ subtitles: subs('제목', LONG), script: '대본', sheet });
+    const card = asConclusion(scenes[scenes.length - 1]);
+    expect(card.heading).not.toBe('');
+    expect(card.heading.length).toBeLessThanOrEqual(HEADLINE_LIMIT);
+    expect(card.callToAction).toBeTruthy();
+    expect(wordsOf(`${card.heading} ${card.callToAction}`)).toEqual(wordsOf(LONG));
+  });
+
+  it('never cuts a 어절 in half', () => {
+    const words = wordsOf(LONG);
+    const card = asTitleCard(buildScenes({ subtitles: subs(LONG, '끝'), script: '대본', sheet })[0]);
+    const scenes = buildScenes({ subtitles: subs('제목', LONG), script: '대본', sheet });
+    const close = asConclusion(scenes[scenes.length - 1]);
+    for (const word of [...wordsOf(card.title), ...wordsOf(close.heading)]) {
+      expect(words).toContain(word);
+    }
   });
 });
 

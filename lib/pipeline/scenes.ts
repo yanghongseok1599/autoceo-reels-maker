@@ -4,7 +4,20 @@ import { pickBackground, type StyleSheet } from '../style-sheet';
 
 type SceneType = SceneDirective['type'];
 
+/** 아래에 다른 블록이 딸리는 제목의 상한: 본문 슬라이드 제목, 목록 말머리, 강조 키워드 */
 const MAX_TITLE = 40;
+
+/**
+ * 타이틀 카드와 마무리 카드의 표제 상한. `MAX_TITLE`보다 큰 이유는 이 두 카드에는 표제
+ * 아래에 다른 텍스트 블록이 없어서 표제 하나가 화면을 다 쓸 수 있기 때문이다.
+ *
+ * 40은 레이아웃 한계가 아니었다. 1080x1920으로 실제 렌더해 보면 46자 제목은 72px에서 세 줄
+ * (y≈800~1060), 50자 마무리는 64px에서 세 줄(y≈840~1070)로 들어간다 — 하단 자막 밴드
+ * (y≥1633)와 500px 넘게 떨어져 있다. 64자면 네 줄 남짓으로, 아직 "표제"로 읽히는 마지막
+ * 지점이다. 그보다 긴 꼬리는 버리지 않고 subtitle / callToAction으로 내려보낸다.
+ */
+const MAX_HEADLINE = 64;
+
 /** 자막이 하나도 없을 때 만드는 타이틀 카드의 길이(초) */
 const FALLBACK_SECONDS = 5;
 
@@ -26,9 +39,13 @@ const MARKER = new RegExp(`(?:${ORDINAL}|[1-9][.)](?!\\d))`);
 const ITEM_SEPARATOR = new RegExp(`\\s*(?:,|${ORDINAL}|[1-9][.)](?!\\d))\\s*`, 'g');
 const QUOTE_MARKS = /["'「『」』]/g;
 
-function truncate(text: string): string {
-  const clean = text.trim();
-  return clean.length <= MAX_TITLE ? clean : `${clean.slice(0, MAX_TITLE - 1)}…`;
+/**
+ * 넘치는 꼬리를 담을 필드가 **없는** 자리에서만 쓴다. 어절 경계에서 자르고 말줄임표를
+ * 붙여, 잘렸다는 사실을 화면에 남긴다 — 조용히 사라지는 것보다 낫다.
+ */
+function truncate(text: string, limit: number = MAX_TITLE): string {
+  const { head, tail } = cutAtWord(text.trim(), limit - 1);
+  return tail ? `${head}…` : head;
 }
 
 /** 쉼표와 순서 표지로 나눈다. 빈 항목은 버리고, 읽히는 개수까지만 남긴다 */
@@ -52,11 +69,11 @@ function splitList(text: string): { title: string; items: string[] } {
   };
 }
 
-/** MAX_TITLE을 넘으면 어절 경계에서 한 번 자른다. 꼬리는 버리지 않고 그대로 돌려준다 */
-function cutAtWord(text: string): { head: string; tail: string } {
-  if (text.length <= MAX_TITLE) return { head: text, tail: '' };
-  const space = text.lastIndexOf(' ', MAX_TITLE);
-  const cut = space > 0 ? space : MAX_TITLE;
+/** 상한을 넘으면 어절 경계에서 한 번 자른다. 꼬리는 버리지 않고 그대로 돌려준다 */
+function cutAtWord(text: string, limit: number = MAX_TITLE): { head: string; tail: string } {
+  if (text.length <= limit) return { head: text, tail: '' };
+  const space = text.lastIndexOf(' ', limit);
+  const cut = space > 0 ? space : limit;
   return { head: text.slice(0, cut).trim(), tail: text.slice(cut).trim() };
 }
 
@@ -96,8 +113,20 @@ function sceneFromSegment(
   const text = segment.text.trim();
 
   switch (type) {
-    case 'title_card': return { ...base, type, title: truncate(text) };
-    case 'conclusion': return { ...base, type, heading: truncate(text) };
+    /**
+     * 표제 카드 두 종류는 규칙이 같다: 상한을 넘으면 **어절 경계**에서 한 번 자르고, 꼬리는
+     * 버리지 않고 둘째 줄 필드로 내려보낸다. 릴스에서 가장 오래 보이는 첫 프레임과 마지막
+     * 프레임에서 문장 끝이 조용히 사라지면 화면만 봐서는 아무 이상이 없어 보인다 —
+     * content_slide가 이미 같은 이유로 자르기를 버렸다.
+     */
+    case 'title_card': {
+      const { head, tail } = cutAtWord(text, MAX_HEADLINE);
+      return { ...base, type, title: head, subtitle: tail || undefined };
+    }
+    case 'conclusion': {
+      const { head, tail } = cutAtWord(text, MAX_HEADLINE);
+      return { ...base, type, heading: head, callToAction: tail || undefined };
+    }
     case 'emphasis': return { ...base, type, keyword: truncate(text) };
     case 'quote': {
       // 따옴표만으로 이루어진 세그먼트면 벗겨 낸 결과가 빈 문자열이다 — 그땐 원문을 쓴다
@@ -124,7 +153,9 @@ function scriptTitleCard(
     // 첫 씬은 언제나 0초에서 시작한다 — buildScenes의 클램프와 같은 이유다
     startTime: 0,
     endTime: subtitles.length ? subtitles[subtitles.length - 1].end : FALLBACK_SECONDS,
-    title: truncate(script),
+    // 대본 전체는 카드 한 장에 담기지 않는다. 여기서는 꼬리를 내려보낼 데가 아니라
+    // 잘렸다는 표시가 필요하다 — 어절 경계에서 자르고 말줄임표를 붙인다.
+    title: truncate(script, MAX_HEADLINE),
     colorAccent: sheet.palette.accent,
     backgroundImageUrl: pickBackground(sheet, 0),
   };

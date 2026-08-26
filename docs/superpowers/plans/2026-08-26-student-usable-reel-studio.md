@@ -415,7 +415,7 @@ git commit -m "feat: add vitest and vertical reel composition skeleton"
 
 ```ts
 import { describe, it, expect } from 'vitest';
-import { getEntryExitOpacity, getExitBlur } from '../utils/animations';
+import { getEntryExitOpacity, getExitBlur, getEntryExitScale } from '../utils/animations';
 
 describe('getEntryExitOpacity', () => {
   it('fades in over the first 10 frames', () => {
@@ -439,6 +439,35 @@ describe('getExitBlur', () => {
 
   it('grows at the end', () => {
     expect(getExitBlur(90, 90)).toBeGreaterThan(0);
+  });
+});
+
+// Remotion의 interpolate는 입력 범위가 엄격히 증가해야 한다. 짧은 씬에서 범위가 무너지면
+// 렌더 도중 예외가 난다 — 긴 씬 테스트만으로는 절대 잡히지 않는 종류의 결함이다.
+describe('short scenes do not break the interpolate ranges', () => {
+  const shortDurations = [1, 2, 3, 5, 15, 21];
+
+  it('never throws for any short duration', () => {
+    for (const dur of shortDurations) {
+      for (const frame of [0, Math.floor(dur / 2), dur]) {
+        expect(() => getEntryExitOpacity(frame, dur)).not.toThrow();
+        expect(() => getExitBlur(frame, dur)).not.toThrow();
+        expect(() => getEntryExitScale(frame, dur, 30, 0.8, 1.08)).not.toThrow();
+      }
+    }
+  });
+
+  it('keeps opacity inside 0..1 for short scenes', () => {
+    for (const dur of shortDurations) {
+      const value = getEntryExitOpacity(Math.floor(dur / 2), dur);
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('skips the fade entirely when the scene is too short for one', () => {
+    expect(getEntryExitOpacity(0, 2)).toBe(1);
+    expect(getExitBlur(2, 2)).toBe(0);
   });
 });
 ```
@@ -493,19 +522,36 @@ export const SPRING_PRESETS = {
 const ENTRY_FRAMES = 10;
 const EXIT_FRAMES = 10;
 
+/**
+ * Remotion의 interpolate는 입력 범위가 **엄격히 증가**해야 한다. 짧은 씬에서 고정 상수를 그대로
+ * 쓰면 값이 중복되거나 역전되어 런타임 예외가 난다. 창을 duration에 맞춰 좁히고, 창을 만들 수
+ * 없을 만큼 짧으면 페이드를 생략한다.
+ */
+function fadeWindows(sceneDuration: number) {
+  const room = Math.floor((sceneDuration - 1) / 2);
+  return {
+    entry: Math.min(ENTRY_FRAMES, room),
+    exit: Math.min(EXIT_FRAMES, room),
+  };
+}
+
 export function getEntryExitOpacity(sceneFrame: number, sceneDuration: number): number {
+  const { entry, exit } = fadeWindows(sceneDuration);
+  if (entry <= 0 || exit <= 0) return 1;
   return interpolate(
     sceneFrame,
-    [0, ENTRY_FRAMES, Math.max(ENTRY_FRAMES, sceneDuration - EXIT_FRAMES), sceneDuration],
+    [0, entry, sceneDuration - exit, sceneDuration],
     [0, 1, 1, 0],
     { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
   );
 }
 
 export function getExitBlur(sceneFrame: number, sceneDuration: number): number {
+  const { exit } = fadeWindows(sceneDuration);
+  if (exit <= 0) return 0;
   return interpolate(
     sceneFrame,
-    [Math.max(0, sceneDuration - EXIT_FRAMES), sceneDuration],
+    [sceneDuration - exit, sceneDuration],
     [0, 8],
     { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
   );
@@ -518,9 +564,11 @@ export function getEntryExitScale(
   from: number,
   to: number,
 ): number {
+  const mid = Math.min(Math.round(fps * 0.5), sceneDuration - 1);
+  if (mid <= 0) return to;
   return interpolate(
     sceneFrame,
-    [0, Math.round(fps * 0.5), sceneDuration],
+    [0, mid, sceneDuration],
     [from, 1, to],
     { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
   );

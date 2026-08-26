@@ -468,6 +468,16 @@ git commit -m "feat: assign scene types to subtitle segments by rule"
 
 `buildFallbackScenes`가 타이틀 카드 하나만 만들던 것을 세그먼트마다 씬을 만드는 것으로 바꾼다.
 
+**시그니처가 위치 인자에서 객체 인자로 바뀐다.** 현재는 `buildFallbackScenes(subtitles, script, sheet)`이고
+새 이름은 `buildScenes({ subtitles, script, sheet })`다. 계획 2b가 여기에 `catalog`를 얹으므로 객체가 맞다.
+**기존 테스트 4개도 함께 바꾼다** — 현재 `subs`는 상수 배열인데 새 테스트는 `subs('제목','본문','끝')` 함수를
+쓰므로, 파일 위쪽에 헬퍼를 만들고 기존 테스트를 그 위로 옮긴다:
+
+```ts
+const seg = (id: number, text: string) => ({ id, text, start: id, end: id + 1, words: [] });
+const subs = (...texts: string[]): SubtitleJSON => texts.map((t, i) => seg(i, t));
+```
+
 **Files:**
 - Modify: `lib/pipeline/scenes.ts`
 - Test: `lib/__tests__/scenes.test.ts` (기존 파일 수정)
@@ -571,10 +581,19 @@ git commit -m "feat: build one scene per segment with a matched character"
 - Test: `lib/__tests__/learning-insights.test.ts`
 
 **Interfaces:**
-- Consumes: 기존 `LearningRecord`
+- Consumes: 기존 `LearningRecord`, `store` (`lib/store`)
 - Produces:
   - `RECOMMENDATION_MIN_SAMPLES = 10`
   - `getLearningInsights(format)`의 `signals`는 그대로, `recommendation`만 문턱을 넘을 때 나온다
+
+**두 가지를 함께 한다:**
+
+1. **`store` 인터페이스로 이전.** 지금은 `fs/promises`를 직접 쓴다(`lib/learning-store.ts:1`). Global Constraints가
+   `store`를 요구하고, 그래야 테스트가 데이터를 심을 수 있다. 키는 `learning-records`. `lib/fish-voice-store.ts`가
+   같은 패턴이니 먼저 읽고 맞춘다.
+
+2. **문턱을 두 분기 모두에.** `getLearningInsights`에는 `format_d` 분기와 일반 분기가 있고 **각각 자기 `recommendation`을
+   반환한다**. 한쪽만 고치면 D탭이 계속 n=1로 처방한다 — 고치려던 결함 그대로다.
 
 - [ ] **Step 1: 실패하는 테스트 작성**
 
@@ -622,6 +641,22 @@ describe('getLearningInsights', () => {
     const insights = await getLearningInsights('format_a');
     expect(insights.recommendation).toContain('표본');
   });
+
+  // format_d는 별도 분기에서 자기 recommendation을 반환한다. 한쪽만 고치면 D탭이 n=1로 처방한다.
+  it('applies the threshold to the format_d branch too', async () => {
+    await store.write('learning-records', [{ ...record(0, 'good'), format: 'format_d' as const }]);
+    const insights = await getLearningInsights('format_d');
+    expect(insights.recommendation).toContain('표본');
+  });
+
+  it('gives a format_d recommendation once the threshold is met', async () => {
+    await store.write('learning-records', Array.from(
+      { length: RECOMMENDATION_MIN_SAMPLES },
+      (_, i) => ({ ...record(i, 'good'), format: 'format_d' as const, referenceCount: 2 }),
+    ));
+    const insights = await getLearningInsights('format_d');
+    expect(insights.recommendation).not.toContain('표본');
+  });
 });
 ```
 
@@ -653,7 +688,7 @@ const INSUFFICIENT =
 
 `ratedCount = goodRecords.length + badRecords.length`를 세고, `ratedCount < RECOMMENDATION_MIN_SAMPLES`면 `recommendation`을 `INSUFFICIENT`로 둔다. `signals`는 손대지 않는다 — 관측 사실 나열은 표본 수와 무관하게 정직하다.
 
-`lib/learning-store.ts`가 아직 자체 파일 I/O를 쓰고 있으면 이 Task에서 `store` 인터페이스로 옮긴다 (키 `learning-records`). Global Constraints가 요구한다.
+`ratedCount`는 **두 분기 모두**에서 계산한다. `signals`는 어느 쪽도 손대지 않는다.
 
 - [ ] **Step 4: 통과 확인**
 
@@ -662,7 +697,7 @@ npx vitest run
 npx tsc --noEmit
 ```
 
-기대: 4개 PASS + 전체 통과
+기대: 6개 PASS + 전체 통과
 
 - [ ] **Step 5: 커밋**
 

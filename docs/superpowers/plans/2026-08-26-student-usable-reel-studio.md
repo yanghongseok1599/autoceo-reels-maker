@@ -404,7 +404,7 @@ git commit -m "feat: add vitest and vertical reel composition skeleton"
   - `getExitBlur(sceneFrame: number, sceneDuration: number): number`
   - `getEntryExitScale(sceneFrame: number, sceneDuration: number, fps: number, from: number, to: number): number`
   - `findActiveScene(scenes: SceneDirective[], currentTime: number): SceneDirective | undefined`
-  - `<SceneRouter scenes={...} />`
+  - `<SceneRouter scenes={...} palette={...} />`
 
 **배경 처리**: `scene.backgroundImageUrl`이 있으면 AI 생성 이미지를 깔고 위에 어두운 오버레이(45%)를 얹어 글자 가독성을 확보한다. 없으면 팔레트 그라디언트로 대체한다. **계획 1에서는 배경 라이브러리가 비어 있으므로 그라디언트 경로가 기본이다** — 두 경로 다 렌더되는지 Step 5에서 확인한다.
 
@@ -583,15 +583,15 @@ export function getEntryExitScale(
 ```tsx
 import React from 'react';
 import { AbsoluteFill, Img, spring, useCurrentFrame, useVideoConfig, interpolate } from 'remotion';
-import { FALLBACK_ACCENT, type TitleCardScene } from '../types';
+import type { Palette, TitleCardScene } from '../types';
 import { SPRING_PRESETS, getEntryExitOpacity, getExitBlur, getEntryExitScale } from '../utils/animations';
 
-export const TitleCard: React.FC<{ scene: TitleCardScene }> = ({ scene }) => {
+export const TitleCard: React.FC<{ scene: TitleCardScene; palette: Palette }> = ({ scene, palette }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const sceneFrame = frame - Math.round(scene.startTime * fps);
   const sceneDuration = Math.round((scene.endTime - scene.startTime) * fps);
-  const accent = scene.colorAccent ?? FALLBACK_ACCENT;
+  const accent = scene.colorAccent ?? palette.accent;
 
   const titleSpring = spring({ frame: sceneFrame, fps, config: SPRING_PRESETS.gentle });
   const opacity = getEntryExitOpacity(sceneFrame, sceneDuration);
@@ -614,20 +614,20 @@ export const TitleCard: React.FC<{ scene: TitleCardScene }> = ({ scene }) => {
       {scene.backgroundImageUrl ? (
         <AbsoluteFill>
           <Img src={scene.backgroundImageUrl} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-          <AbsoluteFill style={{ background: 'rgba(5,8,18,0.45)' }} />
+          <AbsoluteFill style={{ background: `${palette.paper}73` }} />
         </AbsoluteFill>
       ) : (
         <AbsoluteFill style={{
-          background: `radial-gradient(ellipse at center, ${accent}25 0%, rgba(5,8,18,0.95) 70%)`,
+          background: `radial-gradient(ellipse at center, ${accent}25 0%, ${palette.paper}f2 70%)`,
         }} />
       )}
 
       <div style={{
         position: 'relative',
         fontSize: 72, fontWeight: 900, fontFamily: "'Pretendard', sans-serif",
-        color: 'white', textAlign: 'center', maxWidth: 920, lineHeight: 1.2, padding: '0 60px',
+        color: palette.ink, textAlign: 'center', maxWidth: 920, lineHeight: 1.2, padding: '0 60px',
         transform: `scale(${interpolate(titleSpring, [0, 1], [0.8, 1])})`,
-        textShadow: `0 4px 40px ${accent}60, 0 2px 8px rgba(0,0,0,0.8)`,
+        textShadow: `0 4px 40px ${accent}60, 0 2px 8px ${palette.paper}cc`,
       }}>{scene.title}</div>
 
       {scene.subtitle && (
@@ -654,7 +654,7 @@ export const TitleCard: React.FC<{ scene: TitleCardScene }> = ({ scene }) => {
 ```tsx
 import React from 'react';
 import { AbsoluteFill, useCurrentFrame, useVideoConfig } from 'remotion';
-import type { SceneDirective } from '../types';
+import type { Palette, SceneDirective } from '../types';
 import { TitleCard } from './TitleCard';
 
 export function findActiveScene(
@@ -664,23 +664,63 @@ export function findActiveScene(
   return scenes.find((s) => currentTime >= s.startTime && currentTime < s.endTime);
 }
 
-export const SceneRouter: React.FC<{ scenes: SceneDirective[] }> = ({ scenes }) => {
+export const SceneRouter: React.FC<{ scenes: SceneDirective[]; palette: Palette }> = ({ scenes, palette }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const active = findActiveScene(scenes, frame / fps);
-  return <AbsoluteFill>{active?.type === 'title_card' && <TitleCard scene={active} />}</AbsoluteFill>;
+  return (
+    <AbsoluteFill>
+      {active?.type === 'title_card' && <TitleCard scene={active} palette={palette} />}
+    </AbsoluteFill>
+  );
 };
 ```
 
-- [ ] **Step 5: 테스트 통과 확인**
+- [ ] **Step 5: 색 리터럴 가드 테스트 추가**
+
+이 제약은 지금까지 두 번 깨졌다. 사람이 지키는 규칙 대신 테스트가 지키게 한다.
+
+`packages/video/src/__tests__/no-color-literals.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import path from 'node:path';
+
+const SRC = path.resolve(__dirname, '..');
+const ALLOWED_BASENAMES = ['types.ts'];
+const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|rgba?\(/;
+
+function walk(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const full = path.join(dir, entry);
+    return statSync(full).isDirectory() ? walk(full) : [full];
+  });
+}
+
+describe('colour literals live only in types.ts', () => {
+  it('finds none in any other source file', () => {
+    const offenders = walk(SRC)
+      .filter((f) => /\.tsx?$/.test(f))
+      .filter((f) => !f.includes('__tests__'))
+      .filter((f) => !ALLOWED_BASENAMES.includes(path.basename(f)))
+      .filter((f) => COLOR_LITERAL.test(readFileSync(f, 'utf8')));
+
+    expect(offenders.map((f) => path.relative(SRC, f))).toEqual([]);
+  });
+});
+```
+
+- [ ] **Step 6: 테스트 통과 확인**
 
 ```bash
 npx vitest run packages/video/src/__tests__/
+npx tsc --noEmit
 ```
 
-기대: 전부 PASS
+기대: 전부 PASS, tsc 무출력
 
-- [ ] **Step 6: 커밋**
+- [ ] **Step 7: 커밋**
 
 ```bash
 git add packages/video/src
@@ -846,7 +886,7 @@ export const ReelVertical: React.FC<ReelProps> = ({ subtitles, audioUrl, scenes,
   return (
     <AbsoluteFill style={{ backgroundColor: palette.paper }}>
       {audioUrl && <Audio src={audioUrl} />}
-      <AbsoluteFill style={{ zIndex: 10 }}><SceneRouter scenes={scenes} /></AbsoluteFill>
+      <AbsoluteFill style={{ zIndex: 10 }}><SceneRouter scenes={scenes} palette={palette} /></AbsoluteFill>
       <AbsoluteFill style={{ zIndex: 20 }}>
         <Subtitles subtitles={subtitles} currentTime={currentTime} bottom={160} accentColor={palette.accent} />
       </AbsoluteFill>

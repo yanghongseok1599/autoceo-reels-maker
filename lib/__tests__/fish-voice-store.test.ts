@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { listFishVoices, upsertFishVoice, ownsFishVoice } from '../fish-voice-store';
+import { listFishVoices, upsertFishVoice } from '../fish-voice-store';
 import { store } from '../store';
 
 const voice = (id: string, ownerId: string) => ({
@@ -55,30 +55,6 @@ describe('upsertFishVoice', () => {
     await upsertFishVoice(voice('theirs', 'u2'));
     await upsertFishVoice(voice('mine', 'u1'));
     expect(await listFishVoices('u2')).toHaveLength(1);
-  });
-});
-
-describe('ownsFishVoice', () => {
-  beforeEach(async () => {
-    await upsertFishVoice(voice('mine', 'u1'));
-    await upsertFishVoice(voice('theirs', 'u2'));
-  });
-
-  it('accepts the owner', async () => {
-    expect(await ownsFishVoice('u1', 'mine')).toBe(true);
-  });
-
-  it("rejects another student's voice", async () => {
-    expect(await ownsFishVoice('u1', 'theirs')).toBe(false);
-  });
-
-  it('rejects an unknown voice id', async () => {
-    expect(await ownsFishVoice('u1', 'nope')).toBe(false);
-  });
-
-  it('rejects a blank owner or voice id', async () => {
-    expect(await ownsFishVoice('', 'mine')).toBe(false);
-    expect(await ownsFishVoice('u1', '')).toBe(false);
   });
 });
 

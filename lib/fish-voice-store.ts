@@ -37,11 +37,3 @@ export async function upsertFishVoice(profile: FishVoiceProfile): Promise<FishVo
   await store.write(KEY, [profile, ...profiles.filter((item) => item.id !== profile.id)]);
   return profile;
 }
-
-/** 이 수강생이 그 목소리를 쓸 수 있는가. 렌더 요청에서 남의 id를 대는 걸 막는 검사다. */
-export async function ownsFishVoice(ownerId: string, voiceId: string): Promise<boolean> {
-  if (!ownerId || !voiceId) return false;
-  return (await readAll()).some(
-    (profile) => profile.id === voiceId && profile.ownerId === ownerId,
-  );
-}

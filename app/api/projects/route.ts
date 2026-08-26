@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createProject, canRender, chargeRender, MONTHLY_RENDER_LIMIT } from '@/lib/projects';
 import { enqueueJob } from '@/lib/jobs';
-import { listFishVoices } from '@/lib/fish-voice-store';
+import { authorizeVoice } from '@/lib/voice-access';
 import { store } from '@/lib/store';
 import { readSessionFromRequest, type StudentAccount } from '@/lib/auth';
 
@@ -38,27 +38,10 @@ export async function POST(request: Request) {
    * 생성 횟수가 깎인 뒤다. 그리고 기본 목소리로 대체하지 않는다: 조용히 운영자 목소리로
    * 바꿔치기하는 것이 지금 고치고 있는 바로 그 버그다.
    */
-  const voices = await listFishVoices(ownerId);
-  if (voices.length === 0) {
-    return NextResponse.json(
-      { error: '목소리를 먼저 등록해주세요. 내 목소리 샘플을 업로드하면 그 목소리로 영상을 만듭니다.' },
-      { status: 400 },
-    );
-  }
-  if (!voiceReferenceId?.trim()) {
-    return NextResponse.json(
-      { error: '사용할 목소리를 선택해주세요.' },
-      { status: 400 },
-    );
-  }
-  if (!voices.some((voice) => voice.id === voiceReferenceId)) {
-    return NextResponse.json(
-      { error: '사용할 수 없는 목소리입니다. 내 목소리 목록에서 다시 선택해주세요.' },
-      { status: 400 },
-    );
-  }
+  const voice = await authorizeVoice(ownerId, voiceReferenceId);
+  if (!voice.ok) return NextResponse.json({ error: voice.error }, { status: voice.status });
 
-  const project = await createProject({ ownerId, script, voiceReferenceId });
+  const project = await createProject({ ownerId, script, voiceReferenceId: voice.voiceId });
   const job = await enqueueJob({ projectId: project.id, ownerId });
 
   await store.write('students', students.map((s) => (s.id === ownerId ? chargeRender(s) : s)));

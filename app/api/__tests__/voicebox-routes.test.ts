@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { GET as profilesRoute } from '../voicebox/profiles/route';
 import { signSession } from '@/lib/auth';
 import { store } from '@/lib/store';
@@ -12,6 +15,8 @@ const voice = (id: string, ownerId: string): FishVoiceProfile => ({
 beforeEach(async () => {
   process.env.SESSION_SECRET = 'test-session-secret';
   process.env.FISH_API_KEY = 'test-fish-key';
+  // 합성 결과 mp3가 저장소의 실제 public/으로 새어 나가지 않게 한다.
+  process.env.PUBLIC_DIR = mkdtempSync(path.join(os.tmpdir(), 'reels-public-'));
   await store.write('fish-voices', []);
 });
 
@@ -165,5 +170,133 @@ describe('POST /api/voicebox/clone', () => {
     await cloneRoute(cloneReq('u1'));
     expect((await listFishVoices('u1')).map((v) => v.id)).toEqual(['voice_u1']);
     expect(await listFishVoices('u2')).toEqual([]);
+  });
+});
+
+
+/**
+ * 합성 라우트 — 여기가 진짜 사칭 지점이다.
+ *
+ * 목록을 막아도 이 두 라우트가 열려 있으면 id를 아는 사람은 누구나(로그인조차 없이)
+ * 남의 클론 목소리로 아무 문장이나 만들 수 있다.
+ */
+describe.each([
+  ['POST /api/voicebox/preview/start', '../voicebox/preview/start/route'],
+  ['POST /api/voicebox/generate', '../voicebox/generate/route'],
+])('%s — voice ownership', (_name, modulePath) => {
+  /** `lib/env.ts`가 import 시점에 env를 스냅샷하므로 키를 세운 뒤 새로 읽어야 한다. */
+  async function loadRoute() {
+    process.env.FISH_API_KEY = 'test-fish-key';
+    vi.resetModules();
+    return (await import(modulePath)).POST as (req: Request) => Promise<Response>;
+  }
+
+  /** TTS 응답(mp3 바이트). 소유권을 통과한 요청만 여기까지 온다. */
+  function stubFishTts() {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit = {}) =>
+      new Response(new Uint8Array([0xff, 0xfb, 0x00]), {
+        status: 200, headers: { 'Content-Type': 'audio/mpeg' },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  const body = (profileId: string) => ({
+    text: '안녕하세요, 오늘 수업 팁을 알려드릴게요.', profileId, language: 'ko',
+  });
+
+  function req(profileId: string, studentId?: string) {
+    return new Request('http://localhost/api/voicebox/synth', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(studentId ? cookieFor(studentId) : {}),
+      },
+      body: JSON.stringify(body(profileId)),
+    });
+  }
+
+  beforeEach(async () => {
+    await store.write('fish-voices', [voice('mine', 'u1'), voice('theirs', 'u2')]);
+  });
+
+  it('rejects an unauthenticated request', async () => {
+    const fetchMock = stubFishTts();
+    const POST = await loadRoute();
+    const res = await POST(req('mine'));
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toBe('로그인이 필요합니다.');
+    // 인증 전에 Fish Audio를 호출해 크레딧을 태우지도, 오디오를 만들지도 않는다.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a forged session cookie', async () => {
+    stubFishTts();
+    const POST = await loadRoute();
+    const res = await POST(new Request('http://localhost/api/voicebox/synth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: 'student_session=u1' },
+      body: JSON.stringify(body('mine')),
+    }));
+    expect(res.status).toBe(401);
+  });
+
+  /**
+   * 핵심. 이 검사를 지우면 u1이 u2의 목소리로 문장을 합성하고 200을 받는다.
+   */
+  it("refuses to synthesize in another student's voice", async () => {
+    const fetchMock = stubFishTts();
+    const POST = await loadRoute();
+    const res = await POST(req('theirs', 'u1'));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('사용할 수 없는');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unknown voice id the same way it refuses someone else\'s', async () => {
+    stubFishTts();
+    const POST = await loadRoute();
+    const res = await POST(req('no-such-voice', 'u1'));
+    expect(res.status).toBe(400);
+    // 남의 것과 없는 것을 구분해 답하면 그 id가 실재한다는 걸 알려주는 셈이다.
+    expect((await res.json()).error).toContain('사용할 수 없는');
+  });
+
+  it('refuses when the caller has registered no voice at all', async () => {
+    await store.write('fish-voices', [voice('theirs', 'u2')]);
+    stubFishTts();
+    const POST = await loadRoute();
+    const res = await POST(req('theirs', 'u1'));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('목소리를 먼저 등록');
+  });
+
+  it('still synthesizes for the owner of the voice', async () => {
+    const fetchMock = stubFishTts();
+    const POST = await loadRoute();
+    const res = await POST(req('mine', 'u1'));
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // 학생이 고른 목소리로 합성해야 한다 — 통과만 시키고 다른 id를 쓰면 소용없다.
+    const sent = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(sent.reference_id).toBe('mine');
+  });
+
+  it('lets the other student use their own voice', async () => {
+    stubFishTts();
+    const POST = await loadRoute();
+    expect((await POST(req('theirs', 'u2'))).status).toBe(200);
+    expect((await POST(req('mine', 'u2'))).status).toBe(400);
+  });
+
+  it('keeps the existing 400 for a missing text or profileId', async () => {
+    const POST = await loadRoute();
+    const send = (payload: unknown) => POST(new Request('http://localhost/api/voicebox/synth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookieFor('u1') },
+      body: JSON.stringify(payload),
+    }));
+    expect((await send({ profileId: 'mine' })).status).toBe(400);
+    expect((await send({ text: '안녕하세요' })).status).toBe(400);
   });
 });

@@ -2022,6 +2022,6 @@ button {
 .loginCard input { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line-strong);
   background: var(--panel-2); color: var(--ink); }
 .loginCard button { padding: 12px 14px; border-radius: 10px; border: 0;
-  background: var(--acid); color: #0d0f10; font-weight: 700; cursor: pointer; }
+  background: var(--acid); color: var(--bg); font-weight: 700; cursor: pointer; }
 .loginCard button:disabled { opacity: .5; cursor: default; }
 .loginError { color: var(--pink); font-size: 13px; }

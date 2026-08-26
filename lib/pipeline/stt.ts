@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
-import type { SubtitleJSON, SubtitleSegment } from '@studio/video/src/types';
+import type { SubtitleJSON, SubtitleSegment, SubtitleWord } from '@studio/video/src/types';
 
 const run = promisify(execFile);
 
@@ -14,6 +14,34 @@ interface WhisperSegment { text: string; offsets: { from: number; to: number }; 
 function hasSpan(x: unknown): x is { offsets: { from: number; to: number } } {
   const o = (x as { offsets?: { from?: unknown; to?: unknown } })?.offsets;
   return typeof o?.from === 'number' && typeof o?.to === 'number';
+}
+
+/**
+ * whisper는 단어를 여러 서브워드 토큰으로 쪼개 내보내는데, 그 경계 신호는
+ * 토큰 텍스트의 "앞쪽 공백" 하나뿐이다 (예: " 저는", " 운동", "을" → 저는/운동을).
+ * 여기서 trim 해버리면 그 신호가 사라져 매 서브워드가 별도 자막 조각으로 렌더링된다.
+ * 앞 공백이 있으면 새 단어를 시작하고, 없으면 직전 단어에 이어 붙인다.
+ * 특수 토큰은 병합 흐름을 건드리지 않고 건너뛴다 — 중간에 끼어도 앞뒤 토큰은 그대로 이어진다.
+ */
+function mergeTokensIntoWords(tokens: unknown[]): SubtitleWord[] {
+  const words: SubtitleWord[] = [];
+  for (const token of tokens) {
+    if (!hasSpan(token) || typeof (token as WhisperToken).text !== 'string') continue;
+    const raw = (token as WhisperToken).text;
+    const text = raw.trim();
+    if (!text || SPECIAL_TOKEN.test(text)) continue;
+
+    const { from, to } = (token as WhisperToken).offsets;
+    const startsNewWord = /^\s/.test(raw) || words.length === 0;
+    if (startsNewWord) {
+      words.push({ word: text, start: from / 1000, end: to / 1000 });
+    } else {
+      const previous = words[words.length - 1];
+      previous.word += text;
+      previous.end = to / 1000;
+    }
+  }
+  return words;
 }
 
 /**
@@ -34,17 +62,7 @@ export function parseWhisperJson(raw: unknown): SubtitleJSON {
       text: seg.text.trim(),
       start: seg.offsets.from / 1000,
       end: seg.offsets.to / 1000,
-      words: (seg.tokens ?? [])
-        .filter(
-          (token): token is WhisperToken =>
-            typeof (token as WhisperToken)?.text === 'string' && hasSpan(token),
-        )
-        .map((token) => ({
-          word: token.text.trim(),
-          start: token.offsets.from / 1000,
-          end: token.offsets.to / 1000,
-        }))
-        .filter((w) => w.word.length > 0 && !SPECIAL_TOKEN.test(w.word)),
+      words: mergeTokensIntoWords(seg.tokens ?? []),
     }));
 }
 

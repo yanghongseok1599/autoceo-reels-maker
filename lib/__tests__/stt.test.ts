@@ -26,10 +26,12 @@ describe('parseWhisperJson', () => {
     expect(seg.end).toBe(4.9);
   });
 
-  it('extracts word-level timings from tokens', () => {
+  it('extracts word-level timings from tokens, merging continuation tokens', () => {
     const [seg] = parseWhisperJson(whisperOutput);
+    // " 저는" carries a leading space → its own word.
     expect(seg.words[0]).toEqual({ word: '저는', start: 0.13, end: 0.55 });
-    expect(seg.words[1].word).toBe('운동');
+    // " 운동" starts a word; "을" has no leading space and joins it → "운동을".
+    expect(seg.words[1]).toEqual({ word: '운동을', start: 0.87, end: 1.38 });
   });
 
   // whisper는 [_BEG_]와 [_TT_245] 같은 제어 토큰을 단어 사이에 섞어 낸다.
@@ -39,7 +41,77 @@ describe('parseWhisperJson', () => {
     const words = seg.words.map((w) => w.word);
     expect(words).not.toContain('[_BEG_]');
     expect(words).not.toContain('[_TT_245]');
-    expect(words).toEqual(['저는', '운동', '을']);
+    expect(words).toEqual(['저는', '운동을']);
+  });
+
+  // 루트 원인: whisper 서브워드 토큰의 유일한 단어 경계 신호는 "앞쪽 공백"이다.
+  // trim() 만 하면 그 신호가 사라져 서브워드마다 별도 자막 조각이 생긴다.
+  it('starts a new word only when the token has a leading space', () => {
+    const raw = {
+      transcription: [
+        {
+          text: '가나 다',
+          offsets: { from: 0, to: 900 },
+          tokens: [
+            { text: ' 가', offsets: { from: 0, to: 200 } },
+            { text: '나', offsets: { from: 200, to: 400 } },
+            { text: ' 다', offsets: { from: 400, to: 900 } },
+          ],
+        },
+      ],
+    };
+    const [seg] = parseWhisperJson(raw);
+    expect(seg.words.map((w) => w.word)).toEqual(['가나', '다']);
+  });
+
+  it('does not split a word when a special token falls between continuation tokens', () => {
+    const raw = {
+      transcription: [
+        {
+          text: '가나',
+          offsets: { from: 0, to: 400 },
+          tokens: [
+            { text: ' 가', offsets: { from: 0, to: 200 } },
+            { text: '[_TT_200]', offsets: { from: 200, to: 200 } },
+            { text: '나', offsets: { from: 200, to: 400 } },
+          ],
+        },
+      ],
+    };
+    const [seg] = parseWhisperJson(raw);
+    expect(seg.words).toEqual([{ word: '가나', start: 0, end: 0.4 }]);
+  });
+
+  it('treats the first token as a new word even without a leading space', () => {
+    const raw = {
+      transcription: [
+        {
+          text: '가',
+          offsets: { from: 0, to: 200 },
+          tokens: [{ text: '가', offsets: { from: 0, to: 200 } }],
+        },
+      ],
+    };
+    const [seg] = parseWhisperJson(raw);
+    expect(seg.words).toEqual([{ word: '가', start: 0, end: 0.2 }]);
+  });
+
+  it("a merged word's end comes from the last token and start from the first", () => {
+    const raw = {
+      transcription: [
+        {
+          text: '가나다',
+          offsets: { from: 0, to: 900 },
+          tokens: [
+            { text: ' 가', offsets: { from: 100, to: 200 } },
+            { text: '나', offsets: { from: 200, to: 500 } },
+            { text: '다', offsets: { from: 500, to: 900 } },
+          ],
+        },
+      ],
+    };
+    const [seg] = parseWhisperJson(raw);
+    expect(seg.words).toEqual([{ word: '가나다', start: 0.1, end: 0.9 }]);
   });
 
   it('trims surrounding whitespace from text', () => {
@@ -82,9 +154,9 @@ describe('parseWhisperJson', () => {
           text: '섞임',
           offsets: { from: 0, to: 1000 },
           tokens: [
-            { text: '좋음', offsets: { from: 0, to: 400 } },
+            { text: ' 좋음', offsets: { from: 0, to: 400 } },
             { text: '깨짐' },
-            { text: '또좋음', offsets: { from: 400, to: 900 } },
+            { text: ' 또좋음', offsets: { from: 400, to: 900 } },
           ],
         },
       ],

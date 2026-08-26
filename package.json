@@ -2,11 +2,15 @@
   "name": "autoceo-reels-maker",
   "version": "0.1.0",
   "private": true,
+  "workspaces": ["packages/*"],
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "studio": "npm -w @studio/video run studio"
   },
   "dependencies": {
     "@types/node": "^20.12.12",
@@ -16,6 +20,10 @@
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "typescript": "^5.4.5"
+  },
+  "devDependencies": {
+    "vitest": "^2",
+    "@vitejs/plugin-react": "^4"
   },
   "overrides": {
     "postcss": "^8.5.10"

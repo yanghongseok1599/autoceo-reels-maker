@@ -376,7 +376,7 @@ BYOK이므로 이 비용은 수강생이 부담한다. 운영자 원가는 0이�
 
 | # | 항목 | 상태 | 대응 |
 |---|---|---|---|
-| R-1 | `youtube-voice-long-main`이 한 번도 실행된 적 없음 (`node_modules` 부재, 커밋 1개) | **미검증** | **1단계 첫 작업**으로 설치 후 렌더 1회 성공을 확인한다. 실패하면 씬 이식 범위를 재산정한다 |
+| R-1 | `youtube-voice-long-main`이 한 번도 실행된 적 없음 (`node_modules` 부재, 커밋 1개) | **검증 완료 (2026-08-26)** | `npm install` (588 packages) 후 `npx remotion render src/index.ts YouTubeVideo /tmp/verify.mp4 --frames=0-59` 실행, 60/60프레임 렌더·인코딩 성공. `ffprobe` 확인 결과 width=1920, height=1080, duration≈2.0s. React 18 환경에서 Remotion 4 렌더 가능함이 확인됨 (React 19 호환성은 별도 검증 대상, R-1 범위 밖) |
 | R-2 | Fish Audio 미설정 (`.env.local` 부재) | 확인됨 | `FISH_API_KEY` 발급 필요. 요금제도 함께 확인 |
 | R-3 | Fish Audio TTS 요금 | 미확인 | 1단계 착수 시 확인. 무료 경로의 유일한 변동비다 |
 | R-4 | Rive 리깅 공수 | 미산정 | 디자인 작업. PNG 폴백으로 개발과 분리했으므로 일정 위험은 격리됨 |

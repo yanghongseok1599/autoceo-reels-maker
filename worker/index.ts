@@ -60,6 +60,19 @@ async function reportToApi(id: string, patch: Record<string, unknown>) {
   });
 }
 
+/**
+ * 진행률 보고는 실패해도 렌더를 죽이면 안 된다.
+ * `void`만으로는 부족하다 — 동기 예외만 막을 뿐 거부(rejection)는 그대로 새어나가고,
+ * Node 기본값(`--unhandled-rejections=throw`)에서는 렌더 도중 워커가 죽는다. `.catch`가 필요하다.
+ */
+export function makeProgressReporter(
+  report: (id: string, patch: Record<string, unknown>) => Promise<unknown>,
+) {
+  return (jobId: string) => (pct: number): void => {
+    void report(jobId, { status: 'rendering', progress: pct }).catch(() => {});
+  };
+}
+
 async function produceWithEngine(job: ClaimedJob, project: ClaimedProject) {
   await mkdir(RENDER_DIR, { recursive: true });
   return getEngine(job.engine).produce(
@@ -70,7 +83,7 @@ async function produceWithEngine(job: ClaimedJob, project: ClaimedProject) {
       voiceReferenceId: VOICE_ID,
       outPath: path.join(RENDER_DIR, `${job.id}.mp4`),
     },
-    (pct) => { void reportToApi(job.id, { status: 'rendering', progress: pct }); },
+    makeProgressReporter(reportToApi)(job.id),
   );
 }
 

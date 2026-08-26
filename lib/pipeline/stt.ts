@@ -11,23 +11,41 @@ const SPECIAL_TOKEN = /^\[.*\]$/;
 interface WhisperToken { text: string; offsets: { from: number; to: number } }
 interface WhisperSegment { text: string; offsets: { from: number; to: number }; tokens?: WhisperToken[] }
 
+function hasSpan(x: unknown): x is { offsets: { from: number; to: number } } {
+  const o = (x as { offsets?: { from?: unknown; to?: unknown } })?.offsets;
+  return typeof o?.from === 'number' && typeof o?.to === 'number';
+}
+
+/**
+ * 외부 바이너리의 출력을 파싱한다. 형식이 우리 가정과 다른 적이 이미 세 번 있었으므로
+ * 망가진 항목 하나가 전체 전사를 죽이지 않도록 걸러낸다.
+ */
 export function parseWhisperJson(raw: unknown): SubtitleJSON {
-  const segments = (raw as { transcription?: WhisperSegment[] })?.transcription;
+  const segments = (raw as { transcription?: unknown[] })?.transcription;
   if (!Array.isArray(segments)) return [];
 
-  return segments.map((seg, id): SubtitleSegment => ({
-    id,
-    text: seg.text.trim(),
-    start: seg.offsets.from / 1000,
-    end: seg.offsets.to / 1000,
-    words: (seg.tokens ?? [])
-      .map((token) => ({
-        word: token.text.trim(),
-        start: token.offsets.from / 1000,
-        end: token.offsets.to / 1000,
-      }))
-      .filter((w) => w.word.length > 0 && !SPECIAL_TOKEN.test(w.word)),
-  }));
+  return segments
+    .filter(
+      (seg): seg is WhisperSegment =>
+        typeof (seg as WhisperSegment)?.text === 'string' && hasSpan(seg),
+    )
+    .map((seg, id): SubtitleSegment => ({
+      id,
+      text: seg.text.trim(),
+      start: seg.offsets.from / 1000,
+      end: seg.offsets.to / 1000,
+      words: (seg.tokens ?? [])
+        .filter(
+          (token): token is WhisperToken =>
+            typeof (token as WhisperToken)?.text === 'string' && hasSpan(token),
+        )
+        .map((token) => ({
+          word: token.text.trim(),
+          start: token.offsets.from / 1000,
+          end: token.offsets.to / 1000,
+        }))
+        .filter((w) => w.word.length > 0 && !SPECIAL_TOKEN.test(w.word)),
+    }));
 }
 
 export async function transcribeToSubtitles(audioPath: string): Promise<SubtitleJSON> {

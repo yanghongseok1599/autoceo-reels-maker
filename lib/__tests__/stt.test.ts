@@ -55,4 +55,40 @@ describe('parseWhisperJson', () => {
     const noTokens = { transcription: [{ offsets: { from: 0, to: 1000 }, text: '무음' }] };
     expect(parseWhisperJson(noTokens)[0].words).toEqual([]);
   });
+
+  // whisper 출력 형식은 이미 세 번 우리 가정과 달랐다. 망가진 항목 하나가
+  // 전체 전사를 죽이면 안 된다 — 그 실패는 잡 전체를 TypeError로 끝낸다.
+  it('drops a segment missing its offsets instead of throwing', () => {
+    const broken = {
+      transcription: [
+        { text: '멀쩡한 문장', offsets: { from: 0, to: 1000 }, tokens: [] },
+        { text: 'offsets 없음' },
+      ],
+    };
+    const parsed = parseWhisperJson(broken);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].text).toBe('멀쩡한 문장');
+  });
+
+  it('drops a segment missing its text instead of throwing', () => {
+    const broken = { transcription: [{ offsets: { from: 0, to: 1000 } }] };
+    expect(parseWhisperJson(broken)).toEqual([]);
+  });
+
+  it('drops a malformed token but keeps the good ones beside it', () => {
+    const mixed = {
+      transcription: [
+        {
+          text: '섞임',
+          offsets: { from: 0, to: 1000 },
+          tokens: [
+            { text: '좋음', offsets: { from: 0, to: 400 } },
+            { text: '깨짐' },
+            { text: '또좋음', offsets: { from: 400, to: 900 } },
+          ],
+        },
+      ],
+    };
+    expect(parseWhisperJson(mixed)[0].words.map((w) => w.word)).toEqual(['좋음', '또좋음']);
+  });
 });

@@ -112,6 +112,7 @@ export default function Home() {
   const [poseGuideName, setPoseGuideName] = useState("");
   const [referenceNames, setReferenceNames] = useState<string[]>([]);
   const [higgsfieldResultName, setHiggsfieldResultName] = useState("");
+  const [higgsfieldPreviewUrl, setHiggsfieldPreviewUrl] = useState("");
   const [avatarImagePrompt, setAvatarImagePrompt] = useState("남성 피트니스 모델, 검정 운동복, 정면/측면/후면 레퍼런스");
   const [poseGuidePrompt, setPoseGuidePrompt] = useState("덤벨컬 준비 자세, 수축 자세, 팔꿈치 고정 주의사항이 보이는 동작 가이드 시트");
   const [jobId, setJobId] = useState("");
@@ -200,6 +201,14 @@ export default function Home() {
       }
     };
   }, [avatar.previewUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (higgsfieldPreviewUrl) {
+        URL.revokeObjectURL(higgsfieldPreviewUrl);
+      }
+    };
+  }, [higgsfieldPreviewUrl]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -412,6 +421,12 @@ export default function Home() {
       setMessage("힉스필드 결과물은 MP4 파일로 업로드해주세요.");
       return;
     }
+
+    // 이 파일은 서버 어디에도 업로드되지 않는다 — 학습 기록은 파일 이름만 남긴다.
+    // 브라우저가 들고 있는 이 File이 유일한 실제 결과물이므로, 미리보기는
+    // 여기서 만든 오브젝트 URL로 직접 보여준다(스톡 사진 대체 금지).
+    const previewUrl = URL.createObjectURL(file);
+    setHiggsfieldPreviewUrl(previewUrl);
 
     const response = await fetch("/api/learning/import", {
       method: "POST",
@@ -1274,15 +1289,30 @@ export default function Home() {
                   <span className="nextStepBadge">다음 단계</span>
                 )}
                 <div className="outputFrame">
-                  {isExerciseMode ? (
+                  {isExerciseMode && higgsfieldPreviewUrl ? (
+                    /*
+                     * 학생이 힉스필드에서 직접 만들어 업로드한 실제 MP4.
+                     * 서버에는 파일명만 기록되므로(업로드된 실체 없음), 여기서는
+                     * 브라우저가 들고 있는 File로 만든 오브젝트 URL을 그대로 튼다 —
+                     * 남의 스톡 사진을 "완성"이라고 보여줬던 결함의 재발 방지.
+                     */
+                    <div className="outputReelPreview exerciseOutputPreview">
+                      <video
+                        className="outputVideoPreview"
+                        src={higgsfieldPreviewUrl}
+                        controls
+                        playsInline
+                      />
+                    </div>
+                  ) : isExerciseMode ? (
                     <div className="outputReelPreview exerciseOutputPreview">
                       <img
                         className="outputExamplePhoto"
                         src="/images/trainer-exercise-demo.png"
-                        alt="완성된 AI 운동 시연 릴스 예시"
+                        alt="운동 시연 완성 예시"
                       />
                       <div className="outputCaption">
-                        <span>AI 운동 시연 완성</span>
+                        <span>완성 예시</span>
                         <strong>덤벨컬 동작 가이드</strong>
                       </div>
                     </div>
@@ -1318,10 +1348,18 @@ export default function Home() {
                     </div>
                   )}
                 </div>
-                <h3>{isExerciseMode ? "운동 시연 완성" : "아바타 릴스 완성"}</h3>
+                <h3>
+                  {isExerciseMode
+                    ? higgsfieldPreviewUrl
+                      ? "업로드한 결과물"
+                      : "운동 시연 완성 예시"
+                    : "아바타 릴스 완성"}
+                </h3>
                 <p>
                   {isExerciseMode
-                    ? "15~20초 시연 영상을 만들어 릴스로 연결합니다."
+                    ? higgsfieldPreviewUrl
+                      ? "힉스필드에서 직접 만들어 업로드한 영상입니다."
+                      : "힉스필드에서 직접 만든 15~20초 시연 영상을 업로드하면 여기에 표시됩니다."
                     : "완성 MP4를 릴스·쇼츠·틱톡 규격으로 내려받습니다."}
                 </p>
               </div>

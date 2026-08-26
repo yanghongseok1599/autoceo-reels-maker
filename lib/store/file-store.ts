@@ -10,7 +10,9 @@ function dataDir(): string {
   return process.env.STORE_DIR ?? path.join(process.cwd(), '.local-data');
 }
 
-export const fileStore: Store = {
+export const fileStore: Store & { kind: 'file' } = {
+  kind: 'file' as const,
+
   async read<T>(key: string, fallback: T): Promise<T> {
     try {
       return JSON.parse(await readFile(path.join(dataDir(), `${key}.json`), 'utf8')) as T;

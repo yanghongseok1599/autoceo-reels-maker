@@ -2,10 +2,12 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { POST as claimRoute } from '../jobs/next/route';
 import { PATCH as patchRoute, GET as statusRoute } from '../jobs/[id]/route';
 import { enqueueJob, getJob } from '@/lib/jobs';
+import { signSession } from '@/lib/auth';
 import { resetStoreForTests } from '@/lib/store/file-store';
 
 beforeEach(async () => {
   process.env.WORKER_TOKEN = 'test-token';
+  process.env.SESSION_SECRET = 'test-session-secret';
   await resetStoreForTests();
 });
 
@@ -102,20 +104,51 @@ describe('PATCH /api/jobs/[id]', () => {
 });
 
 describe('GET /api/jobs/[id]', () => {
-  function getReq(id: string) {
-    return new Request(`http://localhost/api/jobs/${id}`);
+  function getReq(id: string, studentId?: string) {
+    return new Request(`http://localhost/api/jobs/${id}`, {
+      headers: studentId
+        ? { cookie: `student_session=${encodeURIComponent(signSession(studentId))}` }
+        : {},
+    });
   }
+
+  const status = (id: string, studentId?: string) =>
+    statusRoute(getReq(id, studentId), { params: Promise.resolve({ id }) });
 
   it('returns the polling shape the UI needs', async () => {
     const job = await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
-    const body = await (await statusRoute(getReq(job.id), {
-      params: Promise.resolve({ id: job.id }),
-    })).json();
+    const body = await (await status(job.id, 'u1')).json();
     expect(body).toEqual({ status: 'queued', progress: 0, resultUrl: null, error: null });
   });
 
   it('returns 404 for a job that does not exist', async () => {
-    const res = await statusRoute(getReq('nope'), { params: Promise.resolve({ id: 'nope' }) });
+    expect((await status('nope', 'u1')).status).toBe(404);
+  });
+
+  it('rejects an unauthenticated poll', async () => {
+    const job = await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
+    expect((await status(job.id)).status).toBe(401);
+  });
+
+  it('rejects a forged session cookie', async () => {
+    const job = await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
+    const res = await statusRoute(
+      new Request(`http://localhost/api/jobs/${job.id}`, { headers: { cookie: 'student_session=u1' } }),
+      { params: Promise.resolve({ id: job.id }) },
+    );
+    expect(res.status).toBe(401);
+  });
+
+  // 남의 잡은 "없는 잡"으로 답한다 — 403이면 그 id가 존재한다는 걸 알려주는 셈이다.
+  it('hides another student\'s job behind a 404', async () => {
+    const job = await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
+    const res = await status(job.id, 'u2');
     expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('존재하지 않는 작업입니다.');
+  });
+
+  it('lets the owner poll their own job', async () => {
+    const job = await enqueueJob({ projectId: 'p1', ownerId: 'u2' });
+    expect((await status(job.id, 'u2')).status).toBe(200);
   });
 });

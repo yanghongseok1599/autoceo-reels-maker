@@ -3078,14 +3078,30 @@ Vercel 프로젝트 설정에 등록할 환경변수:
 |---|---|
 | `FISH_API_KEY` | Fish Audio 키 |
 | `FISH_REFERENCE_ID` | 클론 보이스 모델 ID |
+| `SESSION_SECRET` | 세션 쿠키 서명 키 — **없으면 `POST /api/auth`가 전원 500이다** |
 | `WORKER_TOKEN` | 워커와 공유할 난수 문자열 |
 | `BLOB_READ_WRITE_TOKEN` | Vercel Blob 연결 시 자동 주입 |
 
-`WORKER_TOKEN`은 다음으로 만든다:
+`SESSION_SECRET`과 `WORKER_TOKEN`은 각각 다음으로 만든다(서로 다른 값을 쓴다):
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
+
+- [ ] **Step 6-2: 수강생 초대코드 발급**
+
+`.local-data/students.json`은 로컬 파일 저장소에서만 읽힌다. 배포는 Blob 저장소를 고르므로
+파일을 편집해봐야 배포된 앱에서는 모든 초대코드가 거부된다. 선택된 저장소에 쓰는 스크립트를 쓴다:
+
+```bash
+# 로컬
+npx tsx scripts/seed-student.ts "홍길동"
+
+# 배포(Blob)
+BLOB_READ_WRITE_TOKEN=<토큰> npx tsx scripts/seed-student.ts "홍길동"
+```
+
+출력된 초대코드를 수강생에게 전달한다. 코드 원문은 저장되지 않고 해시만 보관된다.
 
 - [ ] **Step 7: 워커를 배포된 앱에 연결**
 

@@ -1,14 +1,14 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createProject, canRender, MONTHLY_RENDER_LIMIT } from '@/lib/projects';
+import { createProject, canRender, chargeRender, MONTHLY_RENDER_LIMIT } from '@/lib/projects';
 import { enqueueJob } from '@/lib/jobs';
 import { store } from '@/lib/store';
-import { readSession, type StudentAccount } from '@/lib/auth';
+import { readSession, SESSION_COOKIE, type StudentAccount } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
-  const ownerId = readSession((await cookies()).get('student_session')?.value);
+  const ownerId = readSession((await cookies()).get(SESSION_COOKIE)?.value);
   if (!ownerId) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
 
   const students = await store.read<StudentAccount[]>('students', []);
@@ -33,8 +33,7 @@ export async function POST(request: Request) {
   const project = await createProject({ ownerId, script });
   const job = await enqueueJob({ projectId: project.id, ownerId });
 
-  await store.write('students', students.map((s) =>
-    s.id === ownerId ? { ...s, monthlyRenderCount: s.monthlyRenderCount + 1 } : s));
+  await store.write('students', students.map((s) => (s.id === ownerId ? chargeRender(s) : s)));
 
   return NextResponse.json({ projectId: project.id, jobId: job.id, status: 'queued' });
 }

@@ -3,7 +3,11 @@ import { store } from './store';
 
 export interface StudentAccount {
   id: string; name: string; codeHash: string; monthlyRenderCount: number; createdAt: string;
+  /** `monthlyRenderCount`가 속한 달(`YYYY-MM`). 없으면 이번 달로 본다 — `lib/projects.ts` 참고. */
+  renderPeriod?: string;
 }
+
+export const SESSION_COOKIE = 'student_session';
 
 export function hashCode(code: string): string {
   return createHash('sha256').update(code.trim().toUpperCase()).digest('hex');
@@ -44,6 +48,28 @@ export function readSession(value: string | undefined | null): string | null {
 
   if (given.length !== expected.length) return null;
   return timingSafeEqual(given, expected) ? id : null;
+}
+
+/**
+ * `next/headers`의 `cookies()`는 요청 스코프 밖에서 던지므로 라우트 핸들러 단위 테스트에서
+ * 쓸 수 없다. 요청 헤더를 직접 읽으면 실제 동작은 같고 테스트가 가능해진다.
+ */
+export function readSessionFromRequest(request: Request): string | null {
+  const header = request.headers.get('cookie');
+  if (!header) return null;
+  for (const part of header.split(';')) {
+    const cut = part.indexOf('=');
+    if (cut < 0) continue;
+    if (part.slice(0, cut).trim() !== SESSION_COOKIE) continue;
+    const raw = part.slice(cut + 1).trim();
+    // 잘못 인코딩된 값(`%zz`)에 decodeURIComponent가 던진다 — 그건 500이 아니라 거절이어야 한다.
+    try {
+      return readSession(decodeURIComponent(raw));
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 export async function verifyInviteCode(code: string): Promise<StudentAccount | null> {

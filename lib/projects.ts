@@ -1,5 +1,12 @@
 import { store } from './store';
 import type { SubtitleJSON, SceneDirective } from '@studio/video/src/types';
+import type { StudentAccount } from './auth';
+
+export const MONTHLY_RENDER_LIMIT = 30;
+
+export function canRender(student: StudentAccount): boolean {
+  return student.monthlyRenderCount < MONTHLY_RENDER_LIMIT;
+}
 
 export interface Project {
   id: string; ownerId: string; engine: 'remotion'; script: string;

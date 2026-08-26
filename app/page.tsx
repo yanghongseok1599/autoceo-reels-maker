@@ -278,7 +278,7 @@ export default function Home() {
     }));
   }
 
-  async function createAvatar(event: ChangeEvent<HTMLInputElement>) {
+  function createAvatar(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -292,32 +292,10 @@ export default function Home() {
       return;
     }
 
+    // Remotion 렌더 경로는 아바타 사진이 필요 없다. 백엔드 생성 호출 없이 로컬 미리보기만
+    // 유지한다 — 캐릭터 에셋 업로드/저장은 계획 2에서 다시 연결한다.
     const previewUrl = URL.createObjectURL(file);
-    setAvatar({ fileName: file.name, id: "", previewUrl, status: "uploading", error: "" });
-    const formData = new FormData();
-    formData.append("photo", file);
-
-    try {
-      const response = await fetch("/api/avatar/create", {
-        method: "POST",
-        body: formData,
-      });
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error ?? "아바타 생성에 실패했습니다.");
-      }
-
-      setAvatar({ fileName: file.name, id: data.avatarId, previewUrl, status: "completed", error: "" });
-    } catch (error) {
-      setAvatar({
-        fileName: file.name,
-        id: "",
-        previewUrl,
-        status: "failed",
-        error: error instanceof Error ? error.message : "아바타 생성에 실패했습니다.",
-      });
-    }
+    setAvatar({ fileName: file.name, id: `local_${crypto.randomUUID()}`, previewUrl, status: "completed", error: "" });
   }
 
   async function createVoice(event: ChangeEvent<HTMLInputElement>) {
@@ -486,16 +464,6 @@ export default function Home() {
   async function generateVideo() {
     setMessage("");
 
-    if (selectedFormat === "A" && !avatar.id) {
-      setMessage("아바타 사진을 먼저 등록해주세요.");
-      return;
-    }
-
-    if (selectedFormat === "A" && !hasVoiceInput) {
-      setMessage("저장된 목소리를 선택하거나, 대본 전체를 읽은 녹음 파일을 업로드해주세요.");
-      return;
-    }
-
     if (selectedFormat === "D" && !poseGuideName) {
       setMessage("AI 운동 시연은 포즈 가이드 이미지를 먼저 업로드해야 합니다.");
       return;
@@ -523,59 +491,13 @@ export default function Home() {
     setResultAudioUrl("");
     setDisplayProgress(0);
     setProgress(12);
-    let voiceAudioUrl = "";
 
-    if (selectedFormat === "A" && !usesRecordedNarration) {
-      setProgress(18);
-
-      const ttsResponse = await fetch("/api/voicebox/generate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          text: script,
-          profileId: activeVoiceId,
-          language: "ko",
-          speakingSpeed,
-          instruct: TONE_INSTRUCT[tone],
-        }),
-      });
-      const ttsData = await ttsResponse.json();
-
-      if (!ttsResponse.ok || ttsData.status === "error") {
-        setVideoStatus("failed");
-        setProgress(0);
-        setMessage(ttsData.error ?? "Fish Audio 음성 합성에 실패했습니다. FISH_API_KEY와 목소리 모델을 확인해주세요.");
-        return;
-      }
-
-      voiceAudioUrl = ttsData.audioUrl ?? "";
-      setResultAudioUrl(ttsData.audioUrl ?? "");
-      setProgress(34);
-    }
-
-    const response = await fetch("/api/video/generate", {
+    const response = await fetch("/api/projects", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        format: selectedFormat === "D" ? "format_d" : "format_a",
-        avatarId: avatar.id,
-        voiceId: activeVoiceId,
-        voiceAudioUrl,
-        script,
-        inputMode: usesRecordedNarration ? "audio" : "text",
-        audioFileName: narrationAudioName,
-        poseGuideName,
-        referenceNames,
-        duration: isExerciseMode ? duration : `${estimatedTalkSeconds}s`,
-        speakingSpeed: isExerciseMode ? undefined : speakingSpeed,
-        tone: isExerciseMode ? undefined : tone,
-        captionMode,
-        quality,
-      }),
+      body: JSON.stringify({ script }),
     });
     const data = await response.json();
 
@@ -595,7 +517,7 @@ export default function Home() {
     const startedAt = Date.now();
     const timer = window.setInterval(async () => {
       const elapsed = Date.now() - startedAt;
-      const response = await fetch(`/api/video/status/${nextJobId}`);
+      const response = await fetch(`/api/jobs/${nextJobId}`);
       const data = await response.json();
 
       if (!response.ok) {
@@ -610,7 +532,7 @@ export default function Home() {
       if (data.status === "completed") {
         window.clearInterval(timer);
         setVideoStatus("completed");
-        setResultUrl(data.videoUrl);
+        setResultUrl(data.resultUrl);
         setLearningRecordId(data.learningRecordId ?? learningRecordId);
         setProgress(100);
         loadLearningInsights(selectedFormat);

@@ -113,7 +113,8 @@ function scriptTitleCard(
 ): SceneDirective {
   return {
     type: 'title_card',
-    startTime: subtitles.length ? subtitles[0].start : 0,
+    // 첫 씬은 언제나 0초에서 시작한다 — buildScenes의 클램프와 같은 이유다
+    startTime: 0,
     endTime: subtitles.length ? subtitles[subtitles.length - 1].end : FALLBACK_SECONDS,
     title: truncate(script),
     colorAccent: sheet.palette.accent,
@@ -130,6 +131,11 @@ function scriptTitleCard(
  * 버린 빈 세그먼트의 구간을 앞 씬이 그대로 흡수한다. 그렇지 않으면 그 틈에 활성 씬이 없어
  * SceneRouter가 빈 화면을 그린다.
  *
+ * 첫 씬은 첫 세그먼트의 `start`가 아니라 **0초**에서 시작한다. TTS 오디오는 말이 나오기 전에
+ * 한 박자 침묵이 있어 whisper의 첫 세그먼트가 0.3~0.8초에서 시작하는 일이 흔하다. 그대로 두면
+ * 릴스에서 가장 값비싼 첫 프레임이 검은 화면으로 나간다 — 그 반 초가 끝까지 볼지를 정한다.
+ * 클램프는 첫 씬을 **앞으로만** 늘린다: 끝과 그 뒤의 씬은 손대지 않으므로 타일링은 그대로다.
+ *
  * 공백뿐인 세그먼트는 씬으로 만들지 않는다. `planSceneTypes`는 배열 길이를 세그먼트와
  * 맞춰야 해서 빈 세그먼트에도 타입을 돌려주지만, 그대로 씬을 만들면 키워드가 빈 emphasis
  * 씬이 그 길이만큼 빈 화면으로 나간다. 계획을 세우기 **전에** 걸러 내므로 위치 규칙
@@ -143,14 +149,13 @@ export function buildScenes(input: {
   if (!kept.length) return [scriptTitleCard(subtitles, script, sheet)];
 
   const plan = planSceneTypes(kept);
-  const audioStart = subtitles[0].start;
   const audioEnd = subtitles[subtitles.length - 1].end;
 
   return kept.map((segment, i) => sceneFromSegment(
     plan[i],
     segment,
     {
-      startTime: i === 0 ? audioStart : segment.start,
+      startTime: i === 0 ? 0 : segment.start,
       endTime: i === kept.length - 1 ? audioEnd : kept[i + 1].start,
     },
     sheet,

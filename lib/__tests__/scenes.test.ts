@@ -106,6 +106,35 @@ describe('buildScenes', () => {
     expect(scenes[1].endTime).toBe(2.5);
   });
 
+  it('opens at frame zero even when speech starts later', () => {
+    // TTS 오디오는 말이 나오기 전에 한 박자 침묵이 있어 whisper의 첫 세그먼트가 0.8초에서
+    // 시작하기도 한다. 첫 씬을 거기서 시작하면 릴스에서 가장 값비싼 첫 프레임이 검은 화면이
+    // 된다. 클램프는 첫 씬을 앞으로만 늘려야 한다 — 뒤는 하나도 밀리지 않는다.
+    const s: SubtitleJSON = [
+      { id: 0, text: '무릎 통증 잡는 법', start: 0.8, end: 2, words: [] },
+      { id: 1, text: '이렇게 잡으세요 지금부터', start: 2.2, end: 3.4, words: [] },
+      { id: 2, text: '마무리합니다', start: 3.4, end: 5, words: [] },
+    ];
+    const scenes = buildScenes({ subtitles: s, script: '대본', sheet });
+    expect(scenes[0].startTime).toBe(0);
+    expect(scenes.map((scene) => [scene.startTime, scene.endTime]))
+      .toEqual([[0, 2.2], [2.2, 3.4], [3.4, 5]]);
+  });
+
+  it('keeps the tiling intact after the opening clamp', () => {
+    const s: SubtitleJSON = [
+      { id: 0, text: '제목입니다', start: 0.8, end: 2, words: [] },
+      { id: 1, text: '   ', start: 2, end: 2.6, words: [] },
+      { id: 2, text: '마무리합니다', start: 2.9, end: 4.5, words: [] },
+    ];
+    const scenes = buildScenes({ subtitles: s, script: '대본', sheet });
+    expect(scenes[0].startTime).toBe(0);
+    expect(scenes[scenes.length - 1].endTime).toBe(s[s.length - 1].end);
+    for (let i = 1; i < scenes.length; i++) {
+      expect(scenes[i].startTime).toBe(scenes[i - 1].endTime);
+    }
+  });
+
   it('takes each scene type from the plan, segment for segment', () => {
     const s = subs(
       '제목',
@@ -189,6 +218,9 @@ describe('buildScenes — 빈 세그먼트', () => {
   });
 
   it('falls back to one title card when every segment is blank', () => {
+    const late: SubtitleJSON = [{ id: 0, text: '  ', start: 0.8, end: 2, words: [] }];
+    expect(buildScenes({ subtitles: late, script: '대본', sheet })[0].startTime).toBe(0);
+
     const s = subs('', '   ');
     const scenes = buildScenes({ subtitles: s, script: '무릎 통증 잡는 법', sheet });
     expect(scenes).toHaveLength(1);

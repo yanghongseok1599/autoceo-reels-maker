@@ -41,10 +41,23 @@ describe('POST /api/jobs/next', () => {
 
   it('includes the project so the worker has the script', async () => {
     const { createProject } = await import('@/lib/projects');
-    const project = await createProject({ ownerId: 'u1', script: '무릎 통증 팁' });
+    const project = await createProject({
+      ownerId: 'u1', script: '무릎 통증 팁', voiceReferenceId: 'voice_u1',
+    });
     await enqueueJob({ projectId: project.id, ownerId: 'u1' });
     const body = await (await claimRoute(req('test-token'))).json();
     expect(body.project.script).toBe('무릎 통증 팁');
+  });
+
+  // 워커는 전역 env가 아니라 이 응답에서 목소리를 읽는다. 빠지면 학생 목소리가 사라진다.
+  it('includes the voice the student chose so the worker can render in it', async () => {
+    const { createProject } = await import('@/lib/projects');
+    const project = await createProject({
+      ownerId: 'u1', script: '대본', voiceReferenceId: 'voice_u1',
+    });
+    await enqueueJob({ projectId: project.id, ownerId: 'u1' });
+    const body = await (await claimRoute(req('test-token'))).json();
+    expect(body.project.voiceReferenceId).toBe('voice_u1');
   });
 
   it('reports a null project rather than hiding the job', async () => {

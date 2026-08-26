@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fishConfigured, listFishProfiles } from "@/lib/fish-audio-client";
+import { readSessionFromRequest } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  const fishProfiles = await listFishProfiles();
+export async function GET(request: Request) {
+  // 목록은 호출자 것만. 세션이 없으면 "누구 것"을 정할 수 없으므로 목록도 없다.
+  const ownerId = readSessionFromRequest(request);
+  if (!ownerId) {
+    return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
+  }
+
+  const fishProfiles = await listFishProfiles(ownerId);
   const profiles = fishProfiles.map((profile) => ({
     id: profile.id,
     name: profile.name,

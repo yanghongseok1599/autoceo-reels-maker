@@ -51,22 +51,19 @@ export function fishConfigured() {
   return Boolean(env.fishApiKey);
 }
 
-export async function listFishProfiles(): Promise<FishVoiceProfile[]> {
-  const localProfiles = await listFishVoices();
-  if (!env.fishReferenceId) return localProfiles;
-
-  const configuredProfile: FishVoiceProfile = {
-    id: env.fishReferenceId,
-    name: "내목소리",
-    language: "ko",
-    sampleCount: 1,
-    createdAt: "env",
-  };
-
-  return [configuredProfile, ...localProfiles.filter((profile) => profile.id !== env.fishReferenceId)];
+/**
+ * 그 수강생이 클론한 목소리만 돌려준다.
+ *
+ * 예전에는 여기에 `env.fishReferenceId`를 "내목소리"라는 이름으로 끼워 넣었다.
+ * 그건 **운영자의** 목소리이고, 모든 수강생의 피커 맨 위에 떠서 기본값으로 뽑혔다.
+ * 수강생이 자기 목소리를 들으려고 돈을 내는 제품에서 이건 기능이 아니라 고장이다.
+ */
+export async function listFishProfiles(ownerId: string): Promise<FishVoiceProfile[]> {
+  return listFishVoices(ownerId);
 }
 
 export async function createFishVoice(input: {
+  ownerId: string;
   name: string;
   language: string;
   audio: Blob;
@@ -99,6 +96,7 @@ export async function createFishVoice(input: {
   const data = (await response.json()) as FishModelEntity;
   const profile = {
     id: data._id,
+    ownerId: input.ownerId,
     name: data.title || input.name,
     language: data.languages?.[0] || input.language,
     sampleCount: data.samples?.length || 1,
@@ -116,7 +114,7 @@ export async function synthesizeFishSpeech(input: {
 }): Promise<FishSpeechResult> {
   try {
     if (!input.referenceId) {
-      throw new Error("Fish Audio voice model ID가 없습니다. 목소리를 먼저 등록하거나 FISH_REFERENCE_ID를 설정해주세요.");
+      throw new Error("Fish Audio voice model ID가 없습니다. 목소리를 먼저 등록해주세요.");
     }
 
     const speed = input.speakingSpeed ? Math.min(1.35, Math.max(0.8, 0.8 + input.speakingSpeed * 0.1)) : 1;

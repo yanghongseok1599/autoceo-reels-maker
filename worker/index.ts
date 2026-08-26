@@ -2,10 +2,14 @@ import path from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { getEngine } from '../lib/engines/remotion';
 import { selectArtifactStore } from '../lib/store';
-import type { EngineId, EngineResult } from '../lib/engines/types';
+import type { EngineId, EngineInput, EngineResult } from '../lib/engines/types';
 
 export interface ClaimedJob { id: string; projectId: string; engine: EngineId }
-export interface ClaimedProject { id: string; ownerId: string; script: string }
+export interface ClaimedProject {
+  id: string; ownerId: string; script: string;
+  /** 이 프로젝트를 만든 학생이 고른 목소리. 워커가 전역 값으로 덮어쓰지 않는다. */
+  voiceReferenceId: string;
+}
 
 export interface PollDeps {
   claim: () => Promise<{ job: ClaimedJob | null; project: ClaimedProject | null }>;
@@ -53,7 +57,6 @@ export async function pollOnce(deps: PollDeps): Promise<'idle' | 'rendered' | 'f
 export const REQUIRED_WORKER_ENV = [
   'WORKER_TOKEN',       // /api/jobs/* 인증
   'APP_URL',            // 폴링 대상 앱 주소
-  'FISH_REFERENCE_ID',  // TTS 보이스 모델
   'FISH_API_KEY',       // TTS 인증
   'WHISPER_MODEL',      // STT ggml 모델 절대 경로
 ] as const;
@@ -76,7 +79,6 @@ export function workerEnvErrorMessage(missing: string[]): string {
 
 const API = process.env.APP_URL ?? 'http://localhost:3000';
 const TOKEN = process.env.WORKER_TOKEN ?? '';
-const VOICE_ID = process.env.FISH_REFERENCE_ID ?? '';
 const RENDER_DIR = path.join(process.cwd(), '.local-data', 'renders');
 const INTERVAL_MS = 5000;
 
@@ -109,16 +111,27 @@ export function makeProgressReporter(
   };
 }
 
+/**
+ * 잡 하나가 엔진에 건네는 입력. 목소리는 **프로젝트에서** 온다.
+ *
+ * 예전에는 여기서 `process.env.FISH_REFERENCE_ID`를 읽었다. 모든 학생의 모든 잡이
+ * 운영자 목소리 하나로 렌더됐다는 뜻이다. 자기 목소리를 들으려고 돈을 낸 학생에게
+ * 이건 사소한 결함이 아니다.
+ */
+export function engineInputFor(project: ClaimedProject, outPath: string): EngineInput {
+  return {
+    projectId: project.id,
+    ownerId: project.ownerId,
+    script: project.script,
+    voiceReferenceId: project.voiceReferenceId,
+    outPath,
+  };
+}
+
 async function produceWithEngine(job: ClaimedJob, project: ClaimedProject) {
   await mkdir(RENDER_DIR, { recursive: true });
   return getEngine(job.engine).produce(
-    {
-      projectId: project.id,
-      ownerId: project.ownerId,
-      script: project.script,
-      voiceReferenceId: VOICE_ID,
-      outPath: path.join(RENDER_DIR, `${job.id}.mp4`),
-    },
+    engineInputFor(project, path.join(RENDER_DIR, `${job.id}.mp4`)),
     makeProgressReporter(reportToApi)(job.id),
   );
 }

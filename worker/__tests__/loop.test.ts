@@ -1,8 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
-import { pollOnce, missingWorkerEnv, artifactKeyFor, REQUIRED_WORKER_ENV } from '../index';
+import {
+  pollOnce, missingWorkerEnv, artifactKeyFor, engineInputFor, REQUIRED_WORKER_ENV,
+} from '../index';
 
 const job = { id: 'job1', projectId: 'p1', engine: 'remotion' as const };
-const project = { id: 'p1', ownerId: 'u1', script: '무릎 통증 팁' };
+const project = {
+  id: 'p1', ownerId: 'u1', script: '무릎 통증 팁', voiceReferenceId: 'voice_u1',
+};
 const publish = async () => 'https://cdn.example/renders/job1.mp4';
 
 describe('pollOnce', () => {
@@ -101,7 +105,7 @@ describe('pollOnce', () => {
 
 describe('missingWorkerEnv', () => {
   const full = {
-    WORKER_TOKEN: 't', APP_URL: 'http://localhost:3000', FISH_REFERENCE_ID: 'v',
+    WORKER_TOKEN: 't', APP_URL: 'http://localhost:3000',
     FISH_API_KEY: 'k', WHISPER_MODEL: '/models/ggml-base.bin',
   };
 
@@ -111,7 +115,7 @@ describe('missingWorkerEnv', () => {
 
   it('names every missing variable at once, not just the first', () => {
     expect(missingWorkerEnv({ APP_URL: 'http://localhost:3000' }))
-      .toEqual(['WORKER_TOKEN', 'FISH_REFERENCE_ID', 'FISH_API_KEY', 'WHISPER_MODEL']);
+      .toEqual(['WORKER_TOKEN', 'FISH_API_KEY', 'WHISPER_MODEL']);
   });
 
   it('treats a blank value as missing', () => {
@@ -121,6 +125,45 @@ describe('missingWorkerEnv', () => {
   it('requires the whole pipeline, not just the worker half', () => {
     expect([...REQUIRED_WORKER_ENV]).toContain('WHISPER_MODEL');
     expect([...REQUIRED_WORKER_ENV]).toContain('FISH_API_KEY');
+  });
+
+  // 목소리는 잡을 따라 다닌다. 전역 값을 요구하면 그 값을 쓰고 싶어진다.
+  it('does not require a global voice id — the voice travels with the project', () => {
+    expect([...REQUIRED_WORKER_ENV]).not.toContain('FISH_REFERENCE_ID');
+    expect(missingWorkerEnv({ ...full, FISH_REFERENCE_ID: undefined })).toEqual([]);
+  });
+});
+
+describe('engineInputFor', () => {
+  const OUT = '/tmp/renders/job1.mp4';
+
+  /**
+   * 이 테스트가 지키는 것: 학생은 자기 목소리를 들으려고 돈을 낸다.
+   * 운영자 env 값이 설정돼 있어도 렌더는 프로젝트의 목소리로 가야 한다.
+   */
+  it('renders with the project voice even when an operator env voice is set', () => {
+    const previous = process.env.FISH_REFERENCE_ID;
+    process.env.FISH_REFERENCE_ID = 'operator-voice';
+    try {
+      expect(engineInputFor(project, OUT).voiceReferenceId).toBe('voice_u1');
+    } finally {
+      if (previous === undefined) delete process.env.FISH_REFERENCE_ID;
+      else process.env.FISH_REFERENCE_ID = previous;
+    }
+  });
+
+  // 상수를 박아 넣어도 위 테스트는 통과한다. 프로젝트마다 달라야 진짜 배선이다.
+  it('gives each project its own voice', () => {
+    const other = { ...project, id: 'p2', ownerId: 'u2', voiceReferenceId: 'voice_u2' };
+    expect(engineInputFor(project, OUT).voiceReferenceId).toBe('voice_u1');
+    expect(engineInputFor(other, OUT).voiceReferenceId).toBe('voice_u2');
+  });
+
+  it('passes the script, owner and output path through unchanged', () => {
+    expect(engineInputFor(project, OUT)).toEqual({
+      projectId: 'p1', ownerId: 'u1', script: '무릎 통증 팁',
+      voiceReferenceId: 'voice_u1', outPath: OUT,
+    });
   });
 });
 

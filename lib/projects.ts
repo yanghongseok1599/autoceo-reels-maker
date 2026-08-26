@@ -36,17 +36,25 @@ export function chargeRender(student: StudentAccount, now: Date = new Date()): S
 
 export interface Project {
   id: string; ownerId: string; engine: 'remotion'; script: string;
+  /**
+   * 이 프로젝트를 읽어줄 목소리. 워커가 전역 `FISH_REFERENCE_ID`를 쓰던 시절에는
+   * 모든 학생의 릴스가 운영자 목소리로 나왔다. 목소리는 잡과 함께 이동한다.
+   */
+  voiceReferenceId: string;
   audioUrl: string | null; subtitles: SubtitleJSON | null;
   scenes: SceneDirective[] | null; resultUrl: string | null; createdAt: string;
 }
 
 const KEY = 'projects';
 
-export async function createProject(input: { ownerId: string; script: string }): Promise<Project> {
+export async function createProject(
+  input: { ownerId: string; script: string; voiceReferenceId: string },
+): Promise<Project> {
   const projects = await store.read<Project[]>(KEY, []);
   const project: Project = {
     id: `proj_${crypto.randomUUID().replaceAll('-', '').slice(0, 16)}`,
     ownerId: input.ownerId, engine: 'remotion', script: input.script,
+    voiceReferenceId: input.voiceReferenceId,
     audioUrl: null, subtitles: null, scenes: null, resultUrl: null,
     createdAt: new Date().toISOString(),
   };

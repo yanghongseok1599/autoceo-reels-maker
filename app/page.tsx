@@ -484,6 +484,12 @@ export default function Home() {
       return;
     }
 
+    // 목소리 없이 보내면 서버가 400으로 돌려준다. 그 왕복을 여기서 아낀다.
+    if (!activeVoiceId) {
+      setMessage("내 목소리를 먼저 등록하고 선택해주세요.");
+      return;
+    }
+
     setVideoStatus("processing");
     setLearningRecordId("");
     setLearningFeedback("");
@@ -497,7 +503,7 @@ export default function Home() {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ script }),
+      body: JSON.stringify({ script, voiceReferenceId: activeVoiceId }),
     });
 
     if (response.status === 401) {

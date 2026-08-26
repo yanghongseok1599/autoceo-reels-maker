@@ -1,14 +1,14 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { createProject, canRender, chargeRender, MONTHLY_RENDER_LIMIT } from '@/lib/projects';
 import { enqueueJob } from '@/lib/jobs';
+import { listFishVoices } from '@/lib/fish-voice-store';
 import { store } from '@/lib/store';
-import { readSession, SESSION_COOKIE, type StudentAccount } from '@/lib/auth';
+import { readSessionFromRequest, type StudentAccount } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
-  const ownerId = readSession((await cookies()).get(SESSION_COOKIE)?.value);
+  const ownerId = readSessionFromRequest(request);
   if (!ownerId) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
 
   const students = await store.read<StudentAccount[]>('students', []);
@@ -22,7 +22,10 @@ export async function POST(request: Request) {
     );
   }
 
-  const { script } = (await request.json()) as { script?: string };
+  const { script, voiceReferenceId } = (await request.json()) as {
+    script?: string;
+    voiceReferenceId?: string;
+  };
   if (!script?.trim()) {
     return NextResponse.json({ error: '대본을 입력해주세요.' }, { status: 400 });
   }
@@ -30,7 +33,32 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: '대본은 최대 1500자까지 입력할 수 있습니다.' }, { status: 400 });
   }
 
-  const project = await createProject({ ownerId, script });
+  /**
+   * 목소리는 **여기서** 검증한다. 워커까지 내려가면 이미 늦다 — 그때는 학생의 이번 달
+   * 생성 횟수가 깎인 뒤다. 그리고 기본 목소리로 대체하지 않는다: 조용히 운영자 목소리로
+   * 바꿔치기하는 것이 지금 고치고 있는 바로 그 버그다.
+   */
+  const voices = await listFishVoices(ownerId);
+  if (voices.length === 0) {
+    return NextResponse.json(
+      { error: '목소리를 먼저 등록해주세요. 내 목소리 샘플을 업로드하면 그 목소리로 영상을 만듭니다.' },
+      { status: 400 },
+    );
+  }
+  if (!voiceReferenceId?.trim()) {
+    return NextResponse.json(
+      { error: '사용할 목소리를 선택해주세요.' },
+      { status: 400 },
+    );
+  }
+  if (!voices.some((voice) => voice.id === voiceReferenceId)) {
+    return NextResponse.json(
+      { error: '사용할 수 없는 목소리입니다. 내 목소리 목록에서 다시 선택해주세요.' },
+      { status: 400 },
+    );
+  }
+
+  const project = await createProject({ ownerId, script, voiceReferenceId });
   const job = await enqueueJob({ projectId: project.id, ownerId });
 
   await store.write('students', students.map((s) => (s.id === ownerId ? chargeRender(s) : s)));

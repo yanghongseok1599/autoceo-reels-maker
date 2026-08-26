@@ -14,6 +14,8 @@
 
 - 세로 해상도는 **1080×1920**, fps **30** 고정
 - 씬 컴포넌트는 계획 1에서 **`title_card` 1종만** 구현한다. 나머지 5종과 Rive는 계획 2
+- 색상을 컴포넌트에 하드코딩하지 않는다. **항상 `StyleSheet.palette`에서 온다**
+- 배경 이미지는 **온보딩에서 생성한 라이브러리에서 재사용**한다. 씬마다 새로 생성하지 않는다 (편당 12 크레딧 → 월 6,000 크레딧)
 - 저장소 접근은 항상 인터페이스를 통한다. 파일 구현체를 직접 import하지 않는다
 - 워커 인증 토큰 `WORKER_TOKEN`은 서버 환경변수와 워커에만 존재한다. `NEXT_PUBLIC_` 접두사 금지
 - 모든 외부 API 키는 서버사이드 전용. 클라이언트 번들 반입 금지
@@ -47,6 +49,7 @@
 | `lib/engines/remotion.ts` | Remotion 어댑터 |
 | `lib/pipeline/tts.ts` | Fish Audio 래퍼 |
 | `lib/pipeline/stt.ts` | whisper 호출 |
+| `lib/style-sheet.ts` | 스타일 프리셋 · 팔레트 · 배경 라이브러리 |
 | `lib/pipeline/scenes.ts` | 씬 지시서 생성 + 폴백 |
 | `app/api/jobs/next/route.ts` | 워커 잡 배출 |
 | `app/api/jobs/[id]/route.ts` | 진행률·결과 수신 |
@@ -133,7 +136,8 @@ git commit -m "docs: record R-1 remotion render verification result"
 **Interfaces:**
 - Consumes: 없음
 - Produces:
-  - `ReelProps { subtitles: SubtitleJSON; audioUrl: string | null; scenes: SceneDirective[]; durationInSeconds: number; characterImageUrl?: string }`
+  - `ReelProps { subtitles: SubtitleJSON; audioUrl: string | null; scenes: SceneDirective[]; durationInSeconds: number; accentColor: string; backgroundImageUrl?: string; characterImageUrl?: string }`
+  - `FALLBACK_ACCENT = '#caff00'` — 팔레트가 없을 때만 쓰는 최후 기본값. 컴포넌트가 색을 직접 정하지 않게 한 곳에 모은다
   - `SubtitleWord { word: string; start: number; end: number }`
   - `SubtitleSegment { id: number; text: string; start: number; end: number; words: SubtitleWord[] }`
   - `type SubtitleJSON = SubtitleSegment[]`
@@ -259,6 +263,8 @@ export interface TitleCardScene {
   title: string;
   subtitle?: string;
   colorAccent?: string;
+  /** 이 씬에만 적용할 배경. 없으면 ReelProps.backgroundImageUrl을 쓴다 */
+  backgroundImageUrl?: string;
 }
 export type SceneDirective = TitleCardScene;
 
@@ -267,8 +273,15 @@ export interface ReelProps {
   audioUrl: string | null;
   scenes: SceneDirective[];
   durationInSeconds: number;
+  /** StyleSheet.palette.accent. 컴포넌트는 색을 직접 정하지 않는다 */
+  accentColor: string;
+  /** 스타일 시트 배경 라이브러리에서 고른 이미지. AI 생성 질감을 코드 모션 아래에 깐다 */
+  backgroundImageUrl?: string;
   characterImageUrl?: string;
 }
+
+/** 팔레트가 주어지지 않았을 때만 쓰는 최후 기본값 */
+export const FALLBACK_ACCENT = '#caff00';
 ```
 
 `packages/video/src/Root.tsx`:
@@ -278,6 +291,7 @@ import React from 'react';
 import { Composition } from 'remotion';
 import { ReelVertical } from './ReelVertical';
 import type { ReelProps } from './types';
+import { FALLBACK_ACCENT } from './types';
 
 export const REEL_WIDTH = 1080;
 export const REEL_HEIGHT = 1920;
@@ -303,6 +317,7 @@ export const RemotionRoot: React.FC = () => (
       audioUrl: null,
       scenes: [],
       durationInSeconds: 5,
+      accentColor: FALLBACK_ACCENT,
     } satisfies ReelProps}
   />
 );
@@ -373,6 +388,8 @@ git commit -m "feat: add vitest and vertical reel composition skeleton"
   - `getEntryExitScale(sceneFrame: number, sceneDuration: number, fps: number, from: number, to: number): number`
   - `findActiveScene(scenes: SceneDirective[], currentTime: number): SceneDirective | undefined`
   - `<SceneRouter scenes={...} />`
+
+**배경 처리**: `scene.backgroundImageUrl`이 있으면 AI 생성 이미지를 깔고 위에 어두운 오버레이(45%)를 얹어 글자 가독성을 확보한다. 없으면 팔레트 그라디언트로 대체한다. **계획 1에서는 배경 라이브러리가 비어 있으므로 그라디언트 경로가 기본이다** — 두 경로 다 렌더되는지 Step 5에서 확인한다.
 
 원본은 `youtube-voice-long-main/packages/remotion-video/src/components/scenes/TitleCard.tsx`다. 세로 전환에서 바뀌는 값: `fontSize` 90→72, `maxWidth` 1400→920, `padding` `0 80px`→`0 60px`, 부제 `fontSize` 40→32, `maxWidth` 1200→860, 장식선 폭 300→240.
 
@@ -500,8 +517,8 @@ export function getEntryExitScale(
 
 ```tsx
 import React from 'react';
-import { AbsoluteFill, spring, useCurrentFrame, useVideoConfig, interpolate } from 'remotion';
-import type { TitleCardScene } from '../types';
+import { AbsoluteFill, Img, spring, useCurrentFrame, useVideoConfig, interpolate } from 'remotion';
+import { FALLBACK_ACCENT, type TitleCardScene } from '../types';
 import { SPRING_PRESETS, getEntryExitOpacity, getExitBlur, getEntryExitScale } from '../utils/animations';
 
 export const TitleCard: React.FC<{ scene: TitleCardScene }> = ({ scene }) => {
@@ -509,7 +526,7 @@ export const TitleCard: React.FC<{ scene: TitleCardScene }> = ({ scene }) => {
   const { fps } = useVideoConfig();
   const sceneFrame = frame - Math.round(scene.startTime * fps);
   const sceneDuration = Math.round((scene.endTime - scene.startTime) * fps);
-  const accent = scene.colorAccent ?? '#caff00';
+  const accent = scene.colorAccent ?? FALLBACK_ACCENT;
 
   const titleSpring = spring({ frame: sceneFrame, fps, config: SPRING_PRESETS.gentle });
   const opacity = getEntryExitOpacity(sceneFrame, sceneDuration);
@@ -522,14 +539,26 @@ export const TitleCard: React.FC<{ scene: TitleCardScene }> = ({ scene }) => {
   return (
     <AbsoluteFill
       style={{
-        background: `radial-gradient(ellipse at center, ${accent}25 0%, rgba(5,8,18,0.95) 70%)`,
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
         gap: 24, opacity,
         filter: exitBlur > 0 ? `blur(${exitBlur}px)` : undefined,
         transform: `scale(${exitScale})`,
       }}
     >
+      {/* 배경: AI 생성 이미지가 있으면 깔고, 없으면 팔레트 그라디언트로 대체 */}
+      {scene.backgroundImageUrl ? (
+        <AbsoluteFill>
+          <Img src={scene.backgroundImageUrl} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <AbsoluteFill style={{ background: 'rgba(5,8,18,0.45)' }} />
+        </AbsoluteFill>
+      ) : (
+        <AbsoluteFill style={{
+          background: `radial-gradient(ellipse at center, ${accent}25 0%, rgba(5,8,18,0.95) 70%)`,
+        }} />
+      )}
+
       <div style={{
+        position: 'relative',
         fontSize: 72, fontWeight: 900, fontFamily: "'Pretendard', sans-serif",
         color: 'white', textAlign: 'center', maxWidth: 920, lineHeight: 1.2, padding: '0 60px',
         transform: `scale(${interpolate(titleSpring, [0, 1], [0.8, 1])})`,
@@ -538,6 +567,7 @@ export const TitleCard: React.FC<{ scene: TitleCardScene }> = ({ scene }) => {
 
       {scene.subtitle && (
         <div style={{
+          position: 'relative',
           fontSize: 32, fontWeight: 500, fontFamily: "'Pretendard', sans-serif",
           color: `${accent}cc`, textAlign: 'center', maxWidth: 860, lineHeight: 1.4,
           opacity: subOpacity, transform: `translateY(${subY}px)`,
@@ -545,6 +575,7 @@ export const TitleCard: React.FC<{ scene: TitleCardScene }> = ({ scene }) => {
       )}
 
       <div style={{
+        position: 'relative',
         width: lineWidth, height: 4, borderRadius: 2, marginTop: 16,
         background: `linear-gradient(90deg, transparent, ${accent}, transparent)`,
       }} />
@@ -604,7 +635,7 @@ git commit -m "feat: add vertical title card scene and animation utils"
 - Consumes: `SubtitleJSON`, `SceneDirective`, `SceneRouter`, `TitleCard`
 - Produces:
   - `analyzeVoiceState(subtitles: SubtitleJSON, currentTime: number): { isSpeaking: boolean; energy: number; currentWordIndex: number }`
-  - `<Subtitles subtitles={...} currentTime={...} bottom={...} />`
+  - `<Subtitles subtitles={...} currentTime={...} bottom={...} accentColor={...} />`
   - `ReelVertical`이 배경·오디오·씬·자막을 모두 조립한 상태가 된다
 
 - [ ] **Step 1: 실패하는 테스트 작성**
@@ -707,9 +738,9 @@ import { AbsoluteFill } from 'remotion';
 import type { SubtitleJSON } from '../types';
 import { analyzeVoiceState } from '../utils/voiceAnalysis';
 
-interface Props { subtitles: SubtitleJSON; currentTime: number; bottom: number }
+interface Props { subtitles: SubtitleJSON; currentTime: number; bottom: number; accentColor: string }
 
-export const Subtitles: React.FC<Props> = ({ subtitles, currentTime, bottom }) => {
+export const Subtitles: React.FC<Props> = ({ subtitles, currentTime, bottom, accentColor }) => {
   const seg = subtitles.find((s) => currentTime >= s.start && currentTime <= s.end);
   if (!seg) return null;
   const { currentWordIndex } = analyzeVoiceState(subtitles, currentTime);
@@ -723,7 +754,7 @@ export const Subtitles: React.FC<Props> = ({ subtitles, currentTime, bottom }) =
       }}>
         {seg.words.map((w, i) => (
           <span key={`${w.start}-${i}`} style={{
-            color: i === currentWordIndex ? '#caff00' : 'white',
+            color: i === currentWordIndex ? accentColor : 'white',
             textShadow: '0 2px 12px rgba(0,0,0,0.9)',
           }}>{w.word}</span>
         ))}
@@ -742,7 +773,7 @@ import type { ReelProps } from './types';
 import { SceneRouter } from './scenes/SceneRouter';
 import { Subtitles } from './components/Subtitles';
 
-export const ReelVertical: React.FC<ReelProps> = ({ subtitles, audioUrl, scenes }) => {
+export const ReelVertical: React.FC<ReelProps> = ({ subtitles, audioUrl, scenes, accentColor }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const currentTime = frame / fps;
@@ -752,7 +783,7 @@ export const ReelVertical: React.FC<ReelProps> = ({ subtitles, audioUrl, scenes 
       {audioUrl && <Audio src={audioUrl} />}
       <AbsoluteFill style={{ zIndex: 10 }}><SceneRouter scenes={scenes} /></AbsoluteFill>
       <AbsoluteFill style={{ zIndex: 20 }}>
-        <Subtitles subtitles={subtitles} currentTime={currentTime} bottom={160} />
+        <Subtitles subtitles={subtitles} currentTime={currentTime} bottom={160} accentColor={accentColor} />
       </AbsoluteFill>
     </AbsoluteFill>
   );
@@ -764,7 +795,7 @@ export const ReelVertical: React.FC<ReelProps> = ({ subtitles, audioUrl, scenes 
 ```bash
 npx vitest run packages/video/src/__tests__/
 npx remotion render packages/video/src/index.ts ReelVertical /tmp/reel.mp4 \
-  --props='{"subtitles":[{"id":0,"text":"무릎 통증 잡는 법","start":0,"end":2,"words":[{"word":"무릎","start":0,"end":0.7},{"word":"통증","start":0.7,"end":1.4},{"word":"잡는 법","start":1.4,"end":2}]}],"audioUrl":null,"scenes":[{"type":"title_card","startTime":0,"endTime":2,"title":"무릎 통증 잡는 법"}],"durationInSeconds":2}'
+  --props='{"subtitles":[{"id":0,"text":"무릎 통증 잡는 법","start":0,"end":2,"words":[{"word":"무릎","start":0,"end":0.7},{"word":"통증","start":0.7,"end":1.4},{"word":"잡는 법","start":1.4,"end":2}]}],"audioUrl":null,"scenes":[{"type":"title_card","startTime":0,"endTime":2,"title":"무릎 통증 잡는 법"}],"durationInSeconds":2,"accentColor":"#caff00"}'
 ```
 
 기대: 테스트 PASS, 1080×1920 MP4에 타이틀과 자막이 보인다. 재생해서 눈으로 확인한다.
@@ -1304,28 +1335,89 @@ git commit -m "feat: add TTS wrapper and whisper-based word timing extraction"
 
 ---
 
-## Task 8: 씬 지시서 생성과 폴백
+## Task 8: 스타일 시트와 씬 지시서
+
+두 개의 독립적인 제작 사례가 같은 결론에 도달했다 — **전역 스타일 기준을 먼저 정하지 않으면 장면마다 분위기가 흩어진다.** 그래서 씬 지시서를 만들기 전에 스타일 시트를 둔다.
+
+배경 이미지는 **온보딩에서 12장을 미리 생성해두고 씬마다 재사용**한다. 씬마다 새로 생성하면 편당 12 크레딧이 들고, 20명이 월 25편씩 만들면 월 6,000 크레딧이 된다. 라이브러리 방식은 수강생당 26 크레딧 1회로 끝난다.
 
 LLM 실패로 전체 파이프라인이 멈추면 안 된다. 폴백은 선택이 아니라 필수다.
 
 **Files:**
-- Create: `lib/pipeline/scenes.ts`
-- Test: `lib/__tests__/scenes.test.ts`
+- Create: `lib/style-sheet.ts`, `lib/pipeline/scenes.ts`
+- Test: `lib/__tests__/style-sheet.test.ts`, `lib/__tests__/scenes.test.ts`
 
 **Interfaces:**
-- Consumes: `SubtitleJSON`, `SceneDirective` (Task 2)
+- Consumes: `SubtitleJSON`, `SceneDirective` (Task 2), `store` (Task 5)
 - Produces:
-  - `buildFallbackScenes(subtitles: SubtitleJSON, script: string): SceneDirective[]`
-  - `generateScenes(input: { script: string; subtitles: SubtitleJSON }): Promise<SceneDirective[]>`
+  - `StyleSheet { ownerId: string; presetId: string; styleSheetUrl: string | null; palette: { accent: string; ink: string; paper: string }; toneWords: string[]; backgroundLibrary: string[] }`
+  - `STYLE_PRESETS: Record<string, Omit<StyleSheet, 'ownerId' | 'backgroundLibrary' | 'styleSheetUrl'>>`
+  - `getStyleSheet(ownerId: string): Promise<StyleSheet>`
+  - `pickBackground(sheet: StyleSheet, sceneIndex: number): string | undefined`
+  - `buildFallbackScenes(subtitles: SubtitleJSON, script: string, sheet: StyleSheet): SceneDirective[]`
+  - `generateScenes(input: { script: string; subtitles: SubtitleJSON; sheet: StyleSheet }): Promise<SceneDirective[]>`
 
 - [ ] **Step 1: 실패하는 테스트 작성**
+
+`lib/__tests__/style-sheet.test.ts`:
+
+```ts
+import { describe, it, expect, beforeEach } from 'vitest';
+import { getStyleSheet, pickBackground, STYLE_PRESETS } from '../style-sheet';
+import { fileStore } from '../store/file-store';
+
+beforeEach(async () => { await fileStore.write('style-sheets', []); });
+
+describe('STYLE_PRESETS', () => {
+  it('ships at least three operator presets', () => {
+    expect(Object.keys(STYLE_PRESETS).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('gives every preset a full palette', () => {
+    for (const preset of Object.values(STYLE_PRESETS)) {
+      expect(preset.palette.accent).toMatch(/^#/);
+      expect(preset.palette.ink).toMatch(/^#/);
+      expect(preset.palette.paper).toMatch(/^#/);
+    }
+  });
+});
+
+describe('getStyleSheet', () => {
+  it('falls back to the default preset for a new student', async () => {
+    const sheet = await getStyleSheet('u1');
+    expect(sheet.ownerId).toBe('u1');
+    expect(sheet.palette.accent).toMatch(/^#/);
+    expect(sheet.backgroundLibrary).toEqual([]);
+  });
+});
+
+describe('pickBackground', () => {
+  const sheet = { backgroundLibrary: ['/a.png', '/b.png', '/c.png'] } as never;
+
+  it('cycles through the library so scenes differ', () => {
+    expect(pickBackground(sheet, 0)).toBe('/a.png');
+    expect(pickBackground(sheet, 1)).toBe('/b.png');
+    expect(pickBackground(sheet, 3)).toBe('/a.png');
+  });
+
+  it('returns undefined when the library is empty', () => {
+    expect(pickBackground({ backgroundLibrary: [] } as never, 0)).toBeUndefined();
+  });
+});
+```
 
 `lib/__tests__/scenes.test.ts`:
 
 ```ts
 import { describe, it, expect } from 'vitest';
 import { buildFallbackScenes } from '../pipeline/scenes';
+import { STYLE_PRESETS } from '../style-sheet';
 import type { SubtitleJSON } from '@studio/video/src/types';
+
+const sheet = {
+  ownerId: 'u1', presetId: 'paper', styleSheetUrl: null,
+  ...STYLE_PRESETS.paper, backgroundLibrary: ['/bg1.png'],
+};
 
 const subs: SubtitleJSON = [
   { id: 0, text: '무릎 통증', start: 0, end: 2, words: [] },
@@ -1334,7 +1426,7 @@ const subs: SubtitleJSON = [
 
 describe('buildFallbackScenes', () => {
   it('produces one title card spanning the whole audio', () => {
-    const scenes = buildFallbackScenes(subs, '무릎 통증 이렇게 잡으세요');
+    const scenes = buildFallbackScenes(subs, '무릎 통증 이렇게 잡으세요', sheet);
     expect(scenes).toHaveLength(1);
     expect(scenes[0].type).toBe('title_card');
     expect(scenes[0].startTime).toBe(0);
@@ -1342,18 +1434,18 @@ describe('buildFallbackScenes', () => {
   });
 
   it('uses the opening line as the title', () => {
-    expect(buildFallbackScenes(subs, '대본')[0].title).toBe('무릎 통증');
+    expect(buildFallbackScenes(subs, '대본', sheet)[0].title).toBe('무릎 통증');
   });
 
   it('falls back to the script when there are no subtitles', () => {
-    const scenes = buildFallbackScenes([], '무릎 통증 잡는 법');
+    const scenes = buildFallbackScenes([], '무릎 통증 잡는 법', sheet);
     expect(scenes[0].title).toBe('무릎 통증 잡는 법');
     expect(scenes[0].endTime).toBeGreaterThan(0);
   });
 
   it('truncates a very long title', () => {
     const long = 'ㄱ'.repeat(200);
-    expect(buildFallbackScenes([], long)[0].title.length).toBeLessThanOrEqual(40);
+    expect(buildFallbackScenes([], long, sheet)[0].title.length).toBeLessThanOrEqual(40);
   });
 });
 ```
@@ -1366,12 +1458,84 @@ npx vitest run lib/__tests__/scenes.test.ts
 
 기대: FAIL — 모듈 없음
 
-- [ ] **Step 3: 구현**
+- [ ] **Step 3: 스타일 시트 구현**
+
+`lib/style-sheet.ts`:
+
+```ts
+import { store } from './store';
+
+export interface StyleSheet {
+  ownerId: string;
+  presetId: string;
+  styleSheetUrl: string | null;
+  palette: { accent: string; ink: string; paper: string };
+  toneWords: string[];
+  backgroundLibrary: string[];
+}
+
+type Preset = Pick<StyleSheet, 'presetId' | 'palette' | 'toneWords'>;
+
+export const STYLE_PRESETS: Record<string, Preset> = {
+  paper: {
+    presetId: 'paper',
+    palette: { accent: '#c8553d', ink: '#2b2118', paper: '#f2e8d5' },
+    toneWords: ['종이 질감', '컷아웃 콜라주', '빈티지 에디토리얼', '따뜻한 미색'],
+  },
+  studio: {
+    presetId: 'studio',
+    palette: { accent: '#caff00', ink: '#f4f4f0', paper: '#0d0f10' },
+    toneWords: ['어두운 스튜디오', '고대비', '네온 액센트', '미니멀'],
+  },
+  clinic: {
+    presetId: 'clinic',
+    palette: { accent: '#2f80ed', ink: '#12233b', paper: '#f7fafc' },
+    toneWords: ['밝고 청결', '의료 정보', '신뢰감', '차분한 블루'],
+  },
+  gym: {
+    presetId: 'gym',
+    palette: { accent: '#ff6b2c', ink: '#141414', paper: '#ededed' },
+    toneWords: ['역동적', '피트니스', '강한 그림자', '오렌지 액센트'],
+  },
+};
+
+const DEFAULT_PRESET = 'studio';
+const KEY = 'style-sheets';
+
+export async function getStyleSheet(ownerId: string): Promise<StyleSheet> {
+  const sheets = await store.read<StyleSheet[]>(KEY, []);
+  const found = sheets.find((s) => s.ownerId === ownerId);
+  if (found) return found;
+
+  return {
+    ownerId,
+    styleSheetUrl: null,
+    backgroundLibrary: [],
+    ...STYLE_PRESETS[DEFAULT_PRESET],
+  };
+}
+
+export async function saveStyleSheet(sheet: StyleSheet): Promise<StyleSheet> {
+  const sheets = await store.read<StyleSheet[]>(KEY, []);
+  await store.write(KEY, [sheet, ...sheets.filter((s) => s.ownerId !== sheet.ownerId)]);
+  return sheet;
+}
+
+/** 씬마다 다른 배경이 나오도록 라이브러리를 순환한다. 비어 있으면 배경 없이 렌더된다 */
+export function pickBackground(sheet: StyleSheet, sceneIndex: number): string | undefined {
+  const lib = sheet.backgroundLibrary;
+  if (!lib.length) return undefined;
+  return lib[sceneIndex % lib.length];
+}
+```
+
+- [ ] **Step 4: 씬 지시서 구현**
 
 `lib/pipeline/scenes.ts`:
 
 ```ts
 import type { SubtitleJSON, SceneDirective } from '@studio/video/src/types';
+import { pickBackground, type StyleSheet } from '../style-sheet';
 
 const MAX_TITLE = 40;
 
@@ -1380,35 +1544,51 @@ function truncate(text: string): string {
   return clean.length <= MAX_TITLE ? clean : `${clean.slice(0, MAX_TITLE - 1)}…`;
 }
 
-export function buildFallbackScenes(subtitles: SubtitleJSON, script: string): SceneDirective[] {
+export function buildFallbackScenes(
+  subtitles: SubtitleJSON,
+  script: string,
+  sheet: StyleSheet,
+): SceneDirective[] {
   const end = subtitles.length ? subtitles[subtitles.length - 1].end : 5;
   const title = truncate(subtitles.length ? subtitles[0].text : script);
-  return [{ type: 'title_card', startTime: 0, endTime: end, title, colorAccent: '#caff00' }];
+  return [{
+    type: 'title_card',
+    startTime: 0,
+    endTime: end,
+    title,
+    colorAccent: sheet.palette.accent,
+    backgroundImageUrl: pickBackground(sheet, 0),
+  }];
 }
 
 export async function generateScenes(input: {
-  script: string; subtitles: SubtitleJSON;
+  script: string; subtitles: SubtitleJSON; sheet: StyleSheet;
 }): Promise<SceneDirective[]> {
   // 계획 1에서는 씬이 title_card 1종이므로 LLM 호출 없이 폴백만 사용한다.
-  // 계획 2에서 씬 6종을 구현할 때 여기에 LLM 경로를 추가하고,
-  // 실패 시 buildFallbackScenes로 되돌린다.
-  return buildFallbackScenes(input.subtitles, input.script);
+  // 계획 2에서 씬 6종을 구현할 때 여기에 LLM 경로를 추가한다. 그때 프롬프트에
+  // sheet.toneWords와 sheet.palette를 주입해야 장면 간 분위기가 유지된다.
+  // LLM 실패 시에는 반드시 buildFallbackScenes로 되돌린다.
+  return buildFallbackScenes(input.subtitles, input.script, input.sheet);
 }
 ```
 
-- [ ] **Step 4: 테스트 통과 확인**
+> **온보딩에서 배경 라이브러리를 채우는 작업은 계획 2에서 한다.** 계획 1에서는
+> `backgroundLibrary`가 비어 있어 배경 없이 렌더되고, 프리셋 팔레트만 적용된다.
+> `pickBackground`가 `undefined`를 반환해도 씬이 정상 렌더되는지 Task 3에서 확인한다.
+
+- [ ] **Step 5: 테스트 통과 확인**
 
 ```bash
-npx vitest run lib/__tests__/scenes.test.ts
+npx vitest run lib/__tests__/style-sheet.test.ts lib/__tests__/scenes.test.ts
 ```
 
-기대: 4개 PASS
+기대: 스타일시트 5개 + 씬 4개 = 9개 PASS
 
-- [ ] **Step 5: 커밋**
+- [ ] **Step 6: 커밋**
 
 ```bash
-git add lib/pipeline/scenes.ts lib/__tests__/scenes.test.ts
-git commit -m "feat: add scene directive generation with fallback"
+git add lib/style-sheet.ts lib/pipeline/scenes.ts lib/__tests__
+git commit -m "feat: add style sheet presets and scene directive generation"
 ```
 
 ---
@@ -1427,7 +1607,7 @@ git commit -m "feat: add scene directive generation with fallback"
 **Interfaces:**
 - Consumes: `POST /api/jobs/next`·`PATCH /api/jobs/:id` (Task 6), `synthesizeNarration` (Task 7), `transcribeToSubtitles` (Task 7), `generateScenes` (Task 8), `ReelProps` (Task 2)
 - Produces:
-  - `EngineInput { projectId: string; script: string; voiceReferenceId: string; outPath: string }`
+  - `EngineInput { projectId: string; ownerId: string; script: string; voiceReferenceId: string; outPath: string }`
   - `EngineResult { outputPath: string; durationSec: number }`
   - `EngineCapabilities { aspectRatios: string[]; maxDurationSec: number; lipSync: boolean; costModel: 'compute'|'credits'; requiresUserKey: boolean }`
   - `VideoEngine { id: EngineId; capabilities: EngineCapabilities; produce(input: EngineInput, onProgress: (pct: number) => void): Promise<EngineResult> }`
@@ -1470,7 +1650,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { pollOnce } from '../index';
 
 const job = { id: 'job1', projectId: 'p1', engine: 'remotion' as const };
-const project = { id: 'p1', script: '무릎 통증 팁' };
+const project = { id: 'p1', ownerId: 'u1', script: '무릎 통증 팁' };
 
 describe('pollOnce', () => {
   it('does nothing when the queue is empty', async () => {
@@ -1569,6 +1749,7 @@ export interface VideoEngine {
 import { synthesizeNarration } from '@/lib/pipeline/tts';
 import { transcribeToSubtitles } from '@/lib/pipeline/stt';
 import { generateScenes } from '@/lib/pipeline/scenes';
+import { getStyleSheet, pickBackground } from '@/lib/style-sheet';
 import { renderReel } from '../../worker/render';
 import type { EngineId, EngineInput, EngineResult, VideoEngine } from './types';
 
@@ -1593,12 +1774,20 @@ export const remotionEngine: VideoEngine = {
     const subtitles = await transcribeToSubtitles(audioPath);
 
     onProgress(55);
-    const scenes = await generateScenes({ script: input.script, subtitles });
+    const sheet = await getStyleSheet(input.ownerId);
+    const scenes = await generateScenes({ script: input.script, subtitles, sheet });
     const durationSec = subtitles.length ? subtitles[subtitles.length - 1].end : 5;
 
     onProgress(70);
     await renderReel(
-      { subtitles, audioUrl: audioPath, scenes, durationInSeconds: durationSec },
+      {
+        subtitles,
+        audioUrl: audioPath,
+        scenes,
+        durationInSeconds: durationSec,
+        accentColor: sheet.palette.accent,
+        backgroundImageUrl: pickBackground(sheet, 0),
+      },
       input.outPath,
     );
 
@@ -1652,7 +1841,7 @@ import { getEngine } from '../lib/engines/remotion';
 import type { EngineId, EngineResult } from '../lib/engines/types';
 
 export interface ClaimedJob { id: string; projectId: string; engine: EngineId }
-export interface ClaimedProject { id: string; script: string }
+export interface ClaimedProject { id: string; ownerId: string; script: string }
 
 export interface PollDeps {
   claim: () => Promise<{ job: ClaimedJob | null; project: ClaimedProject | null }>;
@@ -1713,6 +1902,7 @@ async function produceWithEngine(job: ClaimedJob, project: ClaimedProject) {
   return getEngine(job.engine).produce(
     {
       projectId: project.id,
+      ownerId: project.ownerId,
       script: project.script,
       voiceReferenceId: VOICE_ID,
       outPath: path.join(RENDER_DIR, `${job.id}.mp4`),

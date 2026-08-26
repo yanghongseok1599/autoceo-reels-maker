@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { buildFallbackScenes } from '../pipeline/scenes';
 import { STYLE_PRESETS } from '../style-sheet';
-import type { SubtitleJSON } from '@studio/video/src/types';
+import type { SubtitleJSON, SceneDirective, TitleCardScene } from '@studio/video/src/types';
+
+/** SceneDirective 유니온에서 title_card만 좁힌다 — 다른 씬 타입에는 title이 없다 */
+function asTitleCard(scene: SceneDirective): TitleCardScene {
+  if (scene.type !== 'title_card') throw new Error(`title_card가 아님: ${scene.type}`);
+  return scene;
+}
 
 const sheet = {
   ...STYLE_PRESETS.paper,
@@ -23,17 +29,17 @@ describe('buildFallbackScenes', () => {
   });
 
   it('uses the opening line as the title', () => {
-    expect(buildFallbackScenes(subs, '대본', sheet)[0].title).toBe('무릎 통증');
+    expect(asTitleCard(buildFallbackScenes(subs, '대본', sheet)[0]).title).toBe('무릎 통증');
   });
 
   it('falls back to the script when there are no subtitles', () => {
     const scenes = buildFallbackScenes([], '무릎 통증 잡는 법', sheet);
-    expect(scenes[0].title).toBe('무릎 통증 잡는 법');
+    expect(asTitleCard(scenes[0]).title).toBe('무릎 통증 잡는 법');
     expect(scenes[0].endTime).toBeGreaterThan(0);
   });
 
   it('truncates a very long title', () => {
     const long = 'ㄱ'.repeat(200);
-    expect(buildFallbackScenes([], long, sheet)[0].title.length).toBeLessThanOrEqual(40);
+    expect(asTitleCard(buildFallbackScenes([], long, sheet)[0]).title.length).toBeLessThanOrEqual(40);
   });
 });

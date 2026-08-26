@@ -4,7 +4,8 @@ import path from 'node:path';
 
 const SRC = path.resolve(__dirname, '..');
 const ALLOWED_BASENAMES = ['types.ts'];
-const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|rgba?\(/;
+const COLOR_LITERAL =
+  /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|(['"`])\s*(white|black|red|blue|green|gray|grey|yellow|orange|purple|pink|cyan|magenta|silver|gold|navy|teal|maroon|olive|lime|aqua|fuchsia)\s*\1/i;
 
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {

@@ -2464,6 +2464,8 @@ git commit -m "feat: add engine interface and pull-based render worker"
 - Produces:
   - `hashCode(code: string): string`
   - `verifyInviteCode(code: string): Promise<StudentAccount | null>`
+  - `signSession(studentId: string): string` — `SESSION_SECRET` 미설정 시 예외
+  - `readSession(value: string | undefined | null): string | null` — 서명이 맞을 때만 id 반환, 비밀값 없으면 항상 null
   - `StudentAccount { id: string; name: string; codeHash: string; monthlyRenderCount: number; createdAt: string }`
   - `POST /api/auth` — 본문 `{ code }`. 200 시 `student_session` 쿠키 설정
 
@@ -2473,7 +2475,7 @@ git commit -m "feat: add engine interface and pull-based render worker"
 
 ```ts
 import { describe, it, expect, beforeEach } from 'vitest';
-import { hashCode, verifyInviteCode } from '../auth';
+import { hashCode, verifyInviteCode, signSession, readSession } from '../auth';
 import { fileStore } from '../store/file-store';
 
 beforeEach(async () => {
@@ -2505,6 +2507,47 @@ describe('hashCode', () => {
     expect(hashCode('ABC123')).not.toContain('ABC123');
   });
 });
+
+// 서명이 없으면 세션 쿠키는 인증이 아니라 자기신고다.
+describe('session signing', () => {
+  beforeEach(() => { process.env.SESSION_SECRET = 'test-secret'; });
+
+  it('round-trips a signed session', () => {
+    expect(readSession(signSession('u1'))).toBe('u1');
+  });
+
+  it('rejects a bare student id with no signature', () => {
+    expect(readSession('u1')).toBeNull();
+  });
+
+  it('rejects a tampered student id', () => {
+    const signed = signSession('u1');
+    const forged = signed.replace(/^u1\./, 'u2.');
+    expect(readSession(forged)).toBeNull();
+  });
+
+  it('rejects a tampered signature', () => {
+    const signed = signSession('u1');
+    expect(readSession(`${signed.slice(0, -1)}0`)).toBeNull();
+  });
+
+  it('rejects a signature made with a different secret', () => {
+    const signed = signSession('u1');
+    process.env.SESSION_SECRET = 'other-secret';
+    expect(readSession(signed)).toBeNull();
+  });
+
+  it('fails closed when SESSION_SECRET is unset', () => {
+    const signed = signSession('u1');
+    delete process.env.SESSION_SECRET;
+    expect(readSession(signed)).toBeNull();
+  });
+
+  it('returns null for a missing cookie', () => {
+    expect(readSession(undefined)).toBeNull();
+    expect(readSession('')).toBeNull();
+  });
+});
 ```
 
 - [ ] **Step 2: 테스트가 실패하는지 확인**
@@ -2520,7 +2563,7 @@ npx vitest run lib/__tests__/auth.test.ts
 `lib/auth.ts`:
 
 ```ts
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { store } from './store';
 
 export interface StudentAccount {
@@ -2529,6 +2572,43 @@ export interface StudentAccount {
 
 export function hashCode(code: string): string {
   return createHash('sha256').update(code.trim().toUpperCase()).digest('hex');
+}
+
+/**
+ * 세션 쿠키에 학생 id를 그냥 담으면 인증이 아니라 자기신고가 된다 —
+ * 누구든 `student_session=u1`을 보내면 그 학생이 된다. httpOnly는 JS 읽기만 막을 뿐
+ * curl이나 devtools로 값을 넣는 걸 막지 못한다. 그래서 서명한다.
+ */
+function sessionSecret(): string {
+  return process.env.SESSION_SECRET ?? '';
+}
+
+export function signSession(studentId: string): string {
+  const secret = sessionSecret();
+  if (!secret) {
+    throw new Error('SESSION_SECRET이 설정되지 않았습니다. 세션에 서명할 수 없습니다.');
+  }
+  const mac = createHmac('sha256', secret).update(studentId).digest('hex');
+  return `${studentId}.${mac}`;
+}
+
+/** 서명이 맞을 때만 학생 id를 돌려준다. 비밀값이 없으면 아무도 통과시키지 않는다. */
+export function readSession(value: string | undefined | null): string | null {
+  const secret = sessionSecret();
+  if (!value || !secret) return null;
+
+  const cut = value.lastIndexOf('.');
+  if (cut <= 0 || cut === value.length - 1) return null;
+
+  const id = value.slice(0, cut);
+  const given = Buffer.from(value.slice(cut + 1), 'utf8');
+  const expected = Buffer.from(
+    createHmac('sha256', secret).update(id).digest('hex'),
+    'utf8',
+  );
+
+  if (given.length !== expected.length) return null;
+  return timingSafeEqual(given, expected) ? id : null;
 }
 
 export async function verifyInviteCode(code: string): Promise<StudentAccount | null> {
@@ -2543,7 +2623,7 @@ export async function verifyInviteCode(code: string): Promise<StudentAccount | n
 
 ```ts
 import { NextResponse } from 'next/server';
-import { verifyInviteCode } from '@/lib/auth';
+import { signSession, verifyInviteCode } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -2554,7 +2634,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: '초대코드가 올바르지 않습니다.' }, { status: 401 });
   }
   const res = NextResponse.json({ id: student.id, name: student.name });
-  res.cookies.set('student_session', student.id, {
+  res.cookies.set('student_session', signSession(student.id), {
     httpOnly: true, sameSite: 'lax', secure: true, path: '/', maxAge: 60 * 60 * 24 * 30,
   });
   return res;
@@ -2567,7 +2647,7 @@ export async function POST(request: Request) {
 npx vitest run lib/__tests__/auth.test.ts
 ```
 
-기대: 5개 PASS
+기대: 12개 PASS
 
 - [ ] **Step 5: 커밋**
 
@@ -2652,12 +2732,12 @@ import { cookies } from 'next/headers';
 import { createProject, canRender, MONTHLY_RENDER_LIMIT } from '@/lib/projects';
 import { enqueueJob } from '@/lib/jobs';
 import { store } from '@/lib/store';
-import type { StudentAccount } from '@/lib/auth';
+import { readSession, type StudentAccount } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
-  const ownerId = (await cookies()).get('student_session')?.value;
+  const ownerId = readSession((await cookies()).get('student_session')?.value);
   if (!ownerId) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
 
   const students = await store.read<StudentAccount[]>('students', []);
@@ -2741,6 +2821,9 @@ git commit -m "feat: add project API with usage limit and remove HeyGen mock rou
 FISH_API_KEY=
 FISH_TTS_MODEL=s2.1-pro-free
 FISH_REFERENCE_ID=
+
+# 세션 서명
+SESSION_SECRET=
 
 # 렌더 워커
 WORKER_TOKEN=

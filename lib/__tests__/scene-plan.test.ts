@@ -99,3 +99,46 @@ describe('planSceneTypes', () => {
     }
   });
 });
+
+/**
+ * 규칙 자체가 오분류를 내던 두 경우. 한국어에는 어간이 `라고`로 끝나는 평범한 동사가 많고
+ * (자라고·바라고·모르라고), 숫자 뒤의 마침표는 목록 번호가 아니라 소수점일 수 있다.
+ */
+describe('planSceneTypes — 오탐 방지', () => {
+  const mid = (text: string) =>
+    planSceneTypes(subs('제목', text, '끝'))[1];
+
+  it('does not call an ordinary 라고-stem verb a quote', () => {
+    // 자라다 → 자라고. 인용이 아니라 그냥 근육이 자라고 있다는 문장이다
+    expect(mid('근육이 무럭무럭 자라고 있는 상태를 유지해야 합니다')).not.toBe('quote');
+  });
+
+  it('does not call 바라고 a quote either', () => {
+    expect(mid('그 자세를 계속 바라고만 있으면 절대 바뀌지 않습니다')).not.toBe('quote');
+  });
+
+  it('detects a quote from 라고 followed by a speech verb', () => {
+    expect(mid('코치가 무릎은 발끝을 따라간다라고 했습니다')).toBe('quote');
+  });
+
+  it('still detects a quote from quotation marks alone', () => {
+    expect(mid('코치가 "무릎은 발끝을 따라간다"고 했습니다')).toBe('quote');
+  });
+
+  it('detects a numbered list with no space after the marker', () => {
+    expect(mid('1.준비, 2.하강, 3.상승')).toBe('list_reveal');
+  });
+
+  it('detects a spaceless numbered list even without commas', () => {
+    // 쉼표 규칙이 대신 걸리지 않도록 쉼표를 뺐다 — 오직 번호 표시만으로 판정되어야 한다
+    expect(mid('1.준비 2.하강 3.상승 순서로 천천히 반복하세요')).toBe('list_reveal');
+  });
+
+  it('does not mistake a decimal number for a list marker', () => {
+    expect(mid('무게는 3.5킬로그램으로 시작하세요')).not.toBe('list_reveal');
+  });
+
+  it('does not mistake a decimal duration for a list marker', () => {
+    expect(mid('내려갈 때는 1.5초를 유지하면서 호흡을 뱉으세요')).not.toBe('list_reveal');
+  });
+});

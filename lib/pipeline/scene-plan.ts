@@ -2,8 +2,11 @@ import type { SceneDirective, SubtitleJSON } from '@studio/video/src/types';
 
 type SceneType = SceneDirective['type'];
 
-const LIST = /(첫째|둘째|셋째|[1-9][.)]\s)/;
-const QUOTE = /["'「『]|라고/;
+// 목록 표시. `[.)]` 뒤에 숫자가 오면 소수점이므로 제외한다 — `3.5킬로그램`은 목록이 아니다
+const LIST = /(첫째|둘째|셋째|[1-9][.)](?!\d))/;
+// 인용. `라고`만으로는 부족하다 — 어간이 `라고`로 끝나는 평범한 동사(자라고·바라고)가 걸린다.
+// 실제 따옴표가 있거나, `라고` 뒤에 발화 동사가 따라올 때만 인용으로 본다
+const QUOTE = /["'「『]|라고\s*(했|말|합니다|전했|하셨|한다)/;
 const SHORT = 12;
 
 /**

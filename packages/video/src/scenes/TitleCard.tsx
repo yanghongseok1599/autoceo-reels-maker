@@ -1,14 +1,14 @@
 import React from 'react';
 import { AbsoluteFill, Img, spring, useCurrentFrame, useVideoConfig, interpolate } from 'remotion';
-import { FALLBACK_ACCENT, type TitleCardScene } from '../types';
+import type { Palette, TitleCardScene } from '../types';
 import { SPRING_PRESETS, getEntryExitOpacity, getExitBlur, getEntryExitScale } from '../utils/animations';
 
-export const TitleCard: React.FC<{ scene: TitleCardScene }> = ({ scene }) => {
+export const TitleCard: React.FC<{ scene: TitleCardScene; palette: Palette }> = ({ scene, palette }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const sceneFrame = frame - Math.round(scene.startTime * fps);
   const sceneDuration = Math.round((scene.endTime - scene.startTime) * fps);
-  const accent = scene.colorAccent ?? FALLBACK_ACCENT;
+  const accent = scene.colorAccent ?? palette.accent;
 
   const titleSpring = spring({ frame: sceneFrame, fps, config: SPRING_PRESETS.gentle });
   const opacity = getEntryExitOpacity(sceneFrame, sceneDuration);
@@ -31,20 +31,20 @@ export const TitleCard: React.FC<{ scene: TitleCardScene }> = ({ scene }) => {
       {scene.backgroundImageUrl ? (
         <AbsoluteFill>
           <Img src={scene.backgroundImageUrl} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-          <AbsoluteFill style={{ background: 'rgba(5,8,18,0.45)' }} />
+          <AbsoluteFill style={{ background: `${palette.paper}73` }} />
         </AbsoluteFill>
       ) : (
         <AbsoluteFill style={{
-          background: `radial-gradient(ellipse at center, ${accent}25 0%, rgba(5,8,18,0.95) 70%)`,
+          background: `radial-gradient(ellipse at center, ${accent}25 0%, ${palette.paper}f2 70%)`,
         }} />
       )}
 
       <div style={{
         position: 'relative',
         fontSize: 72, fontWeight: 900, fontFamily: "'Pretendard', sans-serif",
-        color: 'white', textAlign: 'center', maxWidth: 920, lineHeight: 1.2, padding: '0 60px',
+        color: palette.ink, textAlign: 'center', maxWidth: 920, lineHeight: 1.2, padding: '0 60px',
         transform: `scale(${interpolate(titleSpring, [0, 1], [0.8, 1])})`,
-        textShadow: `0 4px 40px ${accent}60, 0 2px 8px rgba(0,0,0,0.8)`,
+        textShadow: `0 4px 40px ${accent}60, 0 2px 8px ${palette.paper}cc`,
       }}>{scene.title}</div>
 
       {scene.subtitle && (

@@ -1270,6 +1270,9 @@ import { beforeEach } from 'vitest';
 // 거기엔 학습 기록과 파일럿 산출물이 들어 있다.
 beforeEach(() => {
   process.env.STORE_DIR = mkdtempSync(path.join(os.tmpdir(), 'reels-store-'));
+  // 배포용 Blob 구현체가 선택되지 않게 한다. `store`는 모듈 로드 시점에 결정되므로,
+  // 앞선 테스트가 이 변수를 남기면 뒤 파일이 자격증명 없이 실제 Blob에 쓰려 한다.
+  delete process.env.BLOB_READ_WRITE_TOKEN;
 });
 ```
 
@@ -2948,7 +2951,7 @@ export default function LoginPage() {
 .loginCard input { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line-strong);
   background: var(--panel-2); color: var(--ink); }
 .loginCard button { padding: 12px 14px; border-radius: 10px; border: 0;
-  background: var(--acid); color: #0d0f10; font-weight: 700; cursor: pointer; }
+  background: var(--acid); color: var(--bg); font-weight: 700; cursor: pointer; }
 .loginCard button:disabled { opacity: .5; cursor: default; }
 .loginError { color: var(--pink); font-size: 13px; }
 ```

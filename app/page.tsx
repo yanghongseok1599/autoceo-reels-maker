@@ -499,6 +499,12 @@ export default function Home() {
       },
       body: JSON.stringify({ script }),
     });
+
+    if (response.status === 401) {
+      window.location.href = '/login';
+      return;
+    }
+
     const data = await response.json();
 
     if (!response.ok) {

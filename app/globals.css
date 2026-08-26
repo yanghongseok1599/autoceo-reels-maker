@@ -2013,3 +2013,15 @@ button {
     letter-spacing: -1px;
   }
 }
+
+.loginShell { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.loginCard { display: flex; flex-direction: column; gap: 16px; width: min(360px, 100%);
+  padding: 32px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; }
+.loginCard h1 { margin: 0; font-size: 28px; }
+.loginCard p { margin: 0; color: var(--muted); font-size: 14px; }
+.loginCard input { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line-strong);
+  background: var(--panel-2); color: var(--ink); }
+.loginCard button { padding: 12px 14px; border-radius: 10px; border: 0;
+  background: var(--acid); color: #0d0f10; font-weight: 700; cursor: pointer; }
+.loginCard button:disabled { opacity: .5; cursor: default; }
+.loginError { color: var(--pink); font-size: 13px; }

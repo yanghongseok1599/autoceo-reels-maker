@@ -733,17 +733,36 @@ git commit -m "feat: add vertical title card scene and animation utils"
 
 **Files:**
 - Create: `packages/video/src/utils/voiceAnalysis.ts`, `packages/video/src/components/Subtitles.tsx`
-- Modify: `packages/video/src/ReelVertical.tsx`
+- Modify: `packages/video/src/ReelVertical.tsx`, `packages/video/src/__tests__/no-color-literals.test.ts` (정규식 강화)
 - Test: `packages/video/src/__tests__/voiceAnalysis.test.ts`
 
 **Interfaces:**
 - Consumes: `SubtitleJSON`, `SceneDirective`, `SceneRouter`, `TitleCard`
 - Produces:
   - `analyzeVoiceState(subtitles: SubtitleJSON, currentTime: number): { isSpeaking: boolean; energy: number; currentWordIndex: number }`
-  - `<Subtitles subtitles={...} currentTime={...} bottom={...} accentColor={...} />`
+  - `<Subtitles subtitles={...} currentTime={...} bottom={...} palette={...} />`
   - `ReelVertical`이 배경·오디오·씬·자막을 모두 조립한 상태가 된다
 
-- [ ] **Step 1: 실패하는 테스트 작성**
+- [ ] **Step 1: 색 가드를 CSS 키워드까지 잡도록 강화**
+
+Task 3의 가드는 `#hex`와 `rgb()/rgba()`만 잡는다. `color: 'white'` 같은 **CSS 색 키워드는 통과한다** —
+자막이 정확히 그 형태를 쓸 예정이라 구멍을 먼저 막는다.
+
+`packages/video/src/__tests__/no-color-literals.test.ts`의 정규식을 교체한다:
+
+```ts
+const COLOR_LITERAL =
+  /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|(['"`])\s*(white|black|red|blue|green|gray|grey|yellow|orange|purple|pink|cyan|magenta|silver|gold|navy|teal|maroon|olive|lime|aqua|fuchsia)\s*\1/i;
+```
+
+```bash
+npx vitest run packages/video/src/__tests__/no-color-literals.test.ts
+```
+
+기대: **PASS** — 강화한 뒤에도 기존 소스에는 위반이 없어야 한다. 여기서 실패하면 Task 3이 놓친
+위반이 있다는 뜻이니 보고할 것.
+
+- [ ] **Step 2: 실패하는 테스트 작성**
 
 `packages/video/src/__tests__/voiceAnalysis.test.ts`:
 
@@ -788,7 +807,7 @@ describe('analyzeVoiceState', () => {
 });
 ```
 
-- [ ] **Step 2: 테스트가 실패하는지 확인**
+- [ ] **Step 3: 테스트가 실패하는지 확인**
 
 ```bash
 npx vitest run packages/video/src/__tests__/voiceAnalysis.test.ts
@@ -796,7 +815,7 @@ npx vitest run packages/video/src/__tests__/voiceAnalysis.test.ts
 
 기대: FAIL — 모듈 없음
 
-- [ ] **Step 3: voiceAnalysis 구현**
+- [ ] **Step 4: voiceAnalysis 구현**
 
 원본 `youtube-voice-long-main/packages/remotion-video/src/utils/voiceAnalysis.ts`에서 이식하되, 계획 1에서 쓰지 않는 `pauseDuration`·`segmentProgress`·`speechRate` 반환은 제거하고 위 인터페이스로 줄인다.
 
@@ -833,19 +852,19 @@ export function analyzeVoiceState(subtitles: SubtitleJSON, currentTime: number):
 }
 ```
 
-- [ ] **Step 4: Subtitles와 ReelVertical 조립**
+- [ ] **Step 5: Subtitles와 ReelVertical 조립**
 
 `packages/video/src/components/Subtitles.tsx`:
 
 ```tsx
 import React from 'react';
 import { AbsoluteFill } from 'remotion';
-import type { SubtitleJSON } from '../types';
+import type { Palette, SubtitleJSON } from '../types';
 import { analyzeVoiceState } from '../utils/voiceAnalysis';
 
-interface Props { subtitles: SubtitleJSON; currentTime: number; bottom: number; accentColor: string }
+interface Props { subtitles: SubtitleJSON; currentTime: number; bottom: number; palette: Palette }
 
-export const Subtitles: React.FC<Props> = ({ subtitles, currentTime, bottom, accentColor }) => {
+export const Subtitles: React.FC<Props> = ({ subtitles, currentTime, bottom, palette }) => {
   const seg = subtitles.find((s) => currentTime >= s.start && currentTime <= s.end);
   if (!seg) return null;
   const { currentWordIndex } = analyzeVoiceState(subtitles, currentTime);
@@ -859,8 +878,8 @@ export const Subtitles: React.FC<Props> = ({ subtitles, currentTime, bottom, acc
       }}>
         {seg.words.map((w, i) => (
           <span key={`${w.start}-${i}`} style={{
-            color: i === currentWordIndex ? accentColor : 'white',
-            textShadow: '0 2px 12px rgba(0,0,0,0.9)',
+            color: i === currentWordIndex ? palette.accent : palette.ink,
+            textShadow: `0 2px 12px ${palette.paper}e6`,
           }}>{w.word}</span>
         ))}
       </div>
@@ -888,14 +907,14 @@ export const ReelVertical: React.FC<ReelProps> = ({ subtitles, audioUrl, scenes,
       {audioUrl && <Audio src={audioUrl} />}
       <AbsoluteFill style={{ zIndex: 10 }}><SceneRouter scenes={scenes} palette={palette} /></AbsoluteFill>
       <AbsoluteFill style={{ zIndex: 20 }}>
-        <Subtitles subtitles={subtitles} currentTime={currentTime} bottom={160} accentColor={palette.accent} />
+        <Subtitles subtitles={subtitles} currentTime={currentTime} bottom={160} palette={palette} />
       </AbsoluteFill>
     </AbsoluteFill>
   );
 };
 ```
 
-- [ ] **Step 5: 테스트 통과 및 실제 렌더 확인**
+- [ ] **Step 6: 테스트 통과 및 실제 렌더 확인**
 
 ```bash
 npx vitest run packages/video/src/__tests__/
@@ -905,7 +924,7 @@ npx remotion render packages/video/src/index.ts ReelVertical /tmp/reel.mp4 \
 
 기대: 테스트 PASS, 1080×1920 MP4에 타이틀과 자막이 보인다. 재생해서 눈으로 확인한다.
 
-- [ ] **Step 6: 커밋**
+- [ ] **Step 7: 커밋**
 
 ```bash
 git add packages/video/src

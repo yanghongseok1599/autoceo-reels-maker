@@ -1,0 +1,2286 @@
+# 수강생이 쓸 수 있는 릴스 스튜디오 — 구현 계획 (1단계 / 계획 1)
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 수강생이 초대코드로 접속해 대본을 입력하면 9:16 세로 릴스 MP4가 생성되어 다운로드되는 서비스를 만든다.
+
+**Architecture:** Vercel의 Next.js 앱이 잡을 큐에 넣고, 맥에서 상시 실행되는 렌더 워커가 그 큐를 폴링해 Remotion으로 렌더한 뒤 결과를 되돌려준다. 워커가 앱을 호출하는 방향이므로 맥에 인바운드 포트를 열 필요가 없다. 생성 엔진은 인터페이스 뒤에 두어 3단계의 Higgsfield가 어댑터 추가만으로 붙게 한다.
+
+**Tech Stack:** Next.js 16 (App Router) · React 19 · Remotion 4 · TypeScript · Vitest · Fish Audio TTS · whisper.cpp (로컬 STT) · Vercel Blob
+
+**Spec:** `docs/superpowers/specs/2026-08-26-unified-video-studio-design.md`
+
+## Global Constraints
+
+- 세로 해상도는 **1080×1920**, fps **30** 고정
+- 씬 컴포넌트는 계획 1에서 **`title_card` 1종만** 구현한다. 나머지 5종과 Rive는 계획 2
+- 저장소 접근은 항상 인터페이스를 통한다. 파일 구현체를 직접 import하지 않는다
+- 워커 인증 토큰 `WORKER_TOKEN`은 서버 환경변수와 워커에만 존재한다. `NEXT_PUBLIC_` 접두사 금지
+- 모든 외부 API 키는 서버사이드 전용. 클라이언트 번들 반입 금지
+- 한국어 UI 문구를 유지한다 (기존 `app/page.tsx` 톤)
+- 커밋은 각 Task 끝에서 한 번씩 한다
+
+---
+
+## File Structure
+
+**신규 생성**
+
+| 경로 | 책임 |
+|---|---|
+| `packages/video/src/index.ts` | Remotion 엔트리 |
+| `packages/video/src/Root.tsx` | 컴포지션 등록 (`ReelVertical`) |
+| `packages/video/src/ReelVertical.tsx` | 세로 릴스 조립 |
+| `packages/video/src/scenes/TitleCard.tsx` | 타이틀 씬 (세로) |
+| `packages/video/src/scenes/SceneRouter.tsx` | 씬 타입 → 컴포넌트 분기 |
+| `packages/video/src/components/Subtitles.tsx` | 단어 단위 자막 |
+| `packages/video/src/utils/animations.ts` | 스프링/입퇴장 헬퍼 |
+| `packages/video/src/utils/voiceAnalysis.ts` | 단어 타이밍 → 에너지 |
+| `packages/video/src/types.ts` | 씬·자막 타입 |
+| `lib/store/types.ts` | 저장소 인터페이스 |
+| `lib/store/file-store.ts` | 파일 기반 구현체 |
+| `lib/store/blob-store.ts` | Vercel Blob 구현체 (배포용) |
+| `lib/store/index.ts` | 환경에 따른 구현체 선택 |
+| `lib/jobs.ts` | RenderJob 큐 로직 |
+| `lib/auth.ts` | 초대코드 세션 |
+| `lib/engines/types.ts` | VideoEngine 인터페이스 |
+| `lib/engines/remotion.ts` | Remotion 어댑터 |
+| `lib/pipeline/tts.ts` | Fish Audio 래퍼 |
+| `lib/pipeline/stt.ts` | whisper 호출 |
+| `lib/pipeline/scenes.ts` | 씬 지시서 생성 + 폴백 |
+| `app/api/jobs/next/route.ts` | 워커 잡 배출 |
+| `app/api/jobs/[id]/route.ts` | 진행률·결과 수신 |
+| `app/api/auth/route.ts` | 초대코드 검증 |
+| `worker/index.ts` | 렌더 워커 루프 |
+
+**수정**
+
+| 경로 | 변경 |
+|---|---|
+| `package.json` | workspaces 추가, vitest, 스크립트 |
+| `app/api/video/generate/route.ts` | HeyGen 분기 제거, 잡 큐로 전환 |
+| `app/page.tsx` | 생성 흐름을 새 API에 연결 |
+| `lib/learning-store.ts` | 표본 문턱 도입 |
+
+**삭제**
+
+`lib/voicebox-client.ts` · `app/reels/` · `app/api/avatar/create/route.ts` · `app/api/voice/clone/route.ts` · `lib/mock-jobs.ts`
+
+---
+
+## Task 1: Remotion 렌더 가능성 검증 (R-1)
+
+스펙의 최대 위험이다. `youtube-voice-long-main`은 `node_modules`가 없고 커밋이 하나뿐이라 한 번도 실행된 적이 없을 가능성이 높다. **여기서 렌더가 안 나오면 이후 모든 이식 작업의 전제가 무너지므로 가장 먼저 확인한다.**
+
+**Files:**
+- 이 저장소는 수정하지 않는다. `/Users/seok/youtube/youtube-voice-long-main`에서만 작업
+
+**Interfaces:**
+- Consumes: 없음
+- Produces: 렌더 성공 여부 (go/no-go). 성공 시 Remotion 4가 이 환경에서 동작함이 확인된다
+
+- [ ] **Step 1: 의존성 설치**
+
+```bash
+cd /Users/seok/youtube/youtube-voice-long-main
+npm install
+```
+
+- [ ] **Step 2: 기본 컴포지션 렌더**
+
+```bash
+cd /Users/seok/youtube/youtube-voice-long-main/packages/remotion-video
+npx remotion render src/index.ts YouTubeVideo /tmp/verify.mp4 --frames=0-59
+```
+
+기대: 60프레임(2초) MP4가 생성된다. 기본 `defaultProps`에 자막 1개가 들어 있으므로 오디오 없이도 렌더된다.
+
+- [ ] **Step 3: 결과 확인**
+
+```bash
+ls -la /tmp/verify.mp4 && ffprobe -v error -show_entries stream=width,height,duration -of default=noprint_wrappers=1 /tmp/verify.mp4
+```
+
+기대: `width=1920`, `height=1080`, 재생시간 약 2초.
+
+- [ ] **Step 4: 결과를 스펙에 기록**
+
+`docs/superpowers/specs/2026-08-26-unified-video-studio-design.md`의 R-1 행 상태를 `미검증` → `검증 완료 (2026-XX-XX)` 또는 실패 사유로 갱신한다.
+
+**실패한 경우 여기서 멈추고 보고한다.** 원인이 Remotion 설치 문제인지, 코드 자체의 결함인지에 따라 이후 계획이 달라진다.
+
+- [ ] **Step 5: 커밋**
+
+```bash
+cd "/Users/seok/youtube/Reels maker"
+git add docs/superpowers/specs/2026-08-26-unified-video-studio-design.md
+git commit -m "docs: record R-1 remotion render verification result"
+```
+
+---
+
+## Task 2: 테스트 인프라 + video 패키지 골격
+
+`Reels maker`에는 테스트 프레임워크가 전혀 없다. 이후 모든 Task가 TDD로 진행되므로 여기서 세운다. 동시에 세로 컴포지션 골격을 만든다.
+
+**React 19 확인 지점:** `Reels maker`는 React 19, `youtube-voice-long-main`은 React 18이다. Remotion 4가 React 19에서 동작하는지 이 Task에서 확인된다. 설치나 렌더가 React 버전 때문에 실패하면 즉시 보고한다.
+
+**Files:**
+- Modify: `package.json`
+- Create: `vitest.config.ts`, `packages/video/package.json`, `packages/video/src/types.ts`, `packages/video/src/Root.tsx`, `packages/video/src/index.ts`, `packages/video/src/ReelVertical.tsx`
+- Test: `packages/video/src/__tests__/composition.test.ts`
+
+**Interfaces:**
+- Consumes: 없음
+- Produces:
+  - `ReelProps { subtitles: SubtitleJSON; audioUrl: string | null; scenes: SceneDirective[]; durationInSeconds: number; characterImageUrl?: string }`
+  - `SubtitleWord { word: string; start: number; end: number }`
+  - `SubtitleSegment { id: number; text: string; start: number; end: number; words: SubtitleWord[] }`
+  - `type SubtitleJSON = SubtitleSegment[]`
+  - `TitleCardScene { type: 'title_card'; startTime: number; endTime: number; title: string; subtitle?: string; colorAccent?: string }`
+  - `type SceneDirective = TitleCardScene`
+  - 컴포지션 id `ReelVertical`, 1080×1920, fps 30
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`packages/video/src/__tests__/composition.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { REEL_WIDTH, REEL_HEIGHT, REEL_FPS, calculateDurationInFrames } from '../Root';
+
+describe('ReelVertical composition', () => {
+  it('is 1080x1920 at 30fps', () => {
+    expect(REEL_WIDTH).toBe(1080);
+    expect(REEL_HEIGHT).toBe(1920);
+    expect(REEL_FPS).toBe(30);
+  });
+
+  it('derives frame count from duration', () => {
+    expect(calculateDurationInFrames(30)).toBe(900);
+    expect(calculateDurationInFrames(15.5)).toBe(465);
+  });
+
+  it('never returns zero frames', () => {
+    expect(calculateDurationInFrames(0)).toBe(1);
+  });
+});
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+```bash
+npx vitest run packages/video/src/__tests__/composition.test.ts
+```
+
+기대: FAIL — `Cannot find module '../Root'`
+
+- [ ] **Step 3: vitest와 워크스페이스 설정**
+
+`package.json`에 추가:
+
+```json
+{
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "studio": "npm -w @studio/video run studio"
+  }
+}
+```
+
+`devDependencies`에 `vitest@^2`, `@vitejs/plugin-react@^4`를 추가하고 `npm install`.
+
+`vitest.config.ts`:
+
+```ts
+import { defineConfig } from 'vitest/config';
+import react from '@vitejs/plugin-react';
+import path from 'node:path';
+
+export default defineConfig({
+  plugins: [react()],
+  test: { environment: 'node', include: ['**/__tests__/**/*.test.ts?(x)'] },
+  resolve: { alias: { '@': path.resolve(__dirname, '.') } },
+});
+```
+
+`next.config.mjs` — 워크스페이스 패키지의 TypeScript를 직접 import하므로 트랜스파일 대상에 넣는다. 이게 없으면 `@studio/video/src/types`를 import하는 서버 코드가 빌드에서 깨진다:
+
+```js
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  transpilePackages: ['@studio/video'],
+};
+
+export default nextConfig;
+```
+
+`packages/video/package.json`:
+
+```json
+{
+  "name": "@studio/video",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "bundle": "remotion bundle src/index.ts --out-dir dist"
+  },
+  "dependencies": {
+    "remotion": "^4.0.0",
+    "@remotion/cli": "^4.0.0",
+    "@remotion/bundler": "^4.0.0",
+    "@remotion/renderer": "^4.0.0"
+  }
+}
+```
+
+- [ ] **Step 4: 타입과 컴포지션 구현**
+
+`packages/video/src/types.ts`:
+
+```ts
+export interface SubtitleWord { word: string; start: number; end: number }
+export interface SubtitleSegment {
+  id: number; text: string; start: number; end: number; words: SubtitleWord[];
+}
+export type SubtitleJSON = SubtitleSegment[];
+
+export interface TitleCardScene {
+  type: 'title_card';
+  startTime: number;
+  endTime: number;
+  title: string;
+  subtitle?: string;
+  colorAccent?: string;
+}
+export type SceneDirective = TitleCardScene;
+
+export interface ReelProps {
+  subtitles: SubtitleJSON;
+  audioUrl: string | null;
+  scenes: SceneDirective[];
+  durationInSeconds: number;
+  characterImageUrl?: string;
+}
+```
+
+`packages/video/src/Root.tsx`:
+
+```tsx
+import React from 'react';
+import { Composition } from 'remotion';
+import { ReelVertical } from './ReelVertical';
+import type { ReelProps } from './types';
+
+export const REEL_WIDTH = 1080;
+export const REEL_HEIGHT = 1920;
+export const REEL_FPS = 30;
+
+export function calculateDurationInFrames(durationInSeconds: number): number {
+  return Math.max(1, Math.ceil(durationInSeconds * REEL_FPS));
+}
+
+export const RemotionRoot: React.FC = () => (
+  <Composition
+    id="ReelVertical"
+    component={ReelVertical}
+    width={REEL_WIDTH}
+    height={REEL_HEIGHT}
+    fps={REEL_FPS}
+    durationInFrames={calculateDurationInFrames(30)}
+    calculateMetadata={async ({ props }: { props: ReelProps }) => ({
+      durationInFrames: calculateDurationInFrames(props.durationInSeconds),
+    })}
+    defaultProps={{
+      subtitles: [],
+      audioUrl: null,
+      scenes: [],
+      durationInSeconds: 5,
+    } satisfies ReelProps}
+  />
+);
+```
+
+`packages/video/src/index.ts`:
+
+```ts
+import { registerRoot } from 'remotion';
+import { RemotionRoot } from './Root';
+registerRoot(RemotionRoot);
+```
+
+`packages/video/src/ReelVertical.tsx` (이번 Task에서는 최소 구현):
+
+```tsx
+import React from 'react';
+import { AbsoluteFill, Audio } from 'remotion';
+import type { ReelProps } from './types';
+
+export const ReelVertical: React.FC<ReelProps> = ({ audioUrl }) => (
+  <AbsoluteFill style={{ backgroundColor: '#0a0a0a' }}>
+    {audioUrl && <Audio src={audioUrl} />}
+  </AbsoluteFill>
+);
+```
+
+- [ ] **Step 5: 테스트 통과 확인**
+
+```bash
+npx vitest run packages/video/src/__tests__/composition.test.ts
+```
+
+기대: 3개 PASS
+
+- [ ] **Step 6: 세로 렌더가 실제로 나오는지 확인**
+
+```bash
+npx remotion render packages/video/src/index.ts ReelVertical /tmp/vertical.mp4 --frames=0-29
+ffprobe -v error -show_entries stream=width,height -of default=noprint_wrappers=1 /tmp/vertical.mp4
+```
+
+기대: `width=1080`, `height=1920`
+
+React 19에서 실패하면 여기서 멈추고 보고한다.
+
+- [ ] **Step 7: 커밋**
+
+```bash
+git add package.json package-lock.json vitest.config.ts packages/
+git commit -m "feat: add vitest and vertical reel composition skeleton"
+```
+
+---
+
+## Task 3: 애니메이션 유틸과 세로 TitleCard 씬
+
+**Files:**
+- Create: `packages/video/src/utils/animations.ts`, `packages/video/src/scenes/TitleCard.tsx`, `packages/video/src/scenes/SceneRouter.tsx`
+- Test: `packages/video/src/__tests__/animations.test.ts`, `packages/video/src/__tests__/sceneRouter.test.ts`
+
+**Interfaces:**
+- Consumes: `SceneDirective`, `TitleCardScene` (Task 2)
+- Produces:
+  - `SPRING_PRESETS: { gentle: { damping: number; stiffness: number } }`
+  - `getEntryExitOpacity(sceneFrame: number, sceneDuration: number): number`
+  - `getExitBlur(sceneFrame: number, sceneDuration: number): number`
+  - `getEntryExitScale(sceneFrame: number, sceneDuration: number, fps: number, from: number, to: number): number`
+  - `findActiveScene(scenes: SceneDirective[], currentTime: number): SceneDirective | undefined`
+  - `<SceneRouter scenes={...} />`
+
+원본은 `youtube-voice-long-main/packages/remotion-video/src/components/scenes/TitleCard.tsx`다. 세로 전환에서 바뀌는 값: `fontSize` 90→72, `maxWidth` 1400→920, `padding` `0 80px`→`0 60px`, 부제 `fontSize` 40→32, `maxWidth` 1200→860, 장식선 폭 300→240.
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`packages/video/src/__tests__/animations.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { getEntryExitOpacity, getExitBlur } from '../utils/animations';
+
+describe('getEntryExitOpacity', () => {
+  it('fades in over the first 10 frames', () => {
+    expect(getEntryExitOpacity(0, 90)).toBe(0);
+    expect(getEntryExitOpacity(10, 90)).toBe(1);
+  });
+
+  it('stays opaque in the middle', () => {
+    expect(getEntryExitOpacity(45, 90)).toBe(1);
+  });
+
+  it('fades out over the last 10 frames', () => {
+    expect(getEntryExitOpacity(90, 90)).toBe(0);
+  });
+});
+
+describe('getExitBlur', () => {
+  it('is zero until the exit window', () => {
+    expect(getExitBlur(45, 90)).toBe(0);
+  });
+
+  it('grows at the end', () => {
+    expect(getExitBlur(90, 90)).toBeGreaterThan(0);
+  });
+});
+```
+
+`packages/video/src/__tests__/sceneRouter.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { findActiveScene } from '../scenes/SceneRouter';
+import type { SceneDirective } from '../types';
+
+const scenes: SceneDirective[] = [
+  { type: 'title_card', startTime: 0, endTime: 3, title: '첫 씬' },
+  { type: 'title_card', startTime: 3, endTime: 6, title: '둘째 씬' },
+];
+
+describe('findActiveScene', () => {
+  it('picks the scene containing the time', () => {
+    expect(findActiveScene(scenes, 1)?.title).toBe('첫 씬');
+    expect(findActiveScene(scenes, 4)?.title).toBe('둘째 씬');
+  });
+
+  it('treats endTime as exclusive', () => {
+    expect(findActiveScene(scenes, 3)?.title).toBe('둘째 씬');
+  });
+
+  it('returns undefined past the last scene', () => {
+    expect(findActiveScene(scenes, 10)).toBeUndefined();
+  });
+});
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+```bash
+npx vitest run packages/video/src/__tests__/animations.test.ts packages/video/src/__tests__/sceneRouter.test.ts
+```
+
+기대: FAIL — 모듈을 찾을 수 없음
+
+- [ ] **Step 3: 유틸 구현**
+
+`packages/video/src/utils/animations.ts`:
+
+```ts
+import { interpolate } from 'remotion';
+
+export const SPRING_PRESETS = {
+  gentle: { damping: 20, stiffness: 100 },
+} as const;
+
+const ENTRY_FRAMES = 10;
+const EXIT_FRAMES = 10;
+
+export function getEntryExitOpacity(sceneFrame: number, sceneDuration: number): number {
+  return interpolate(
+    sceneFrame,
+    [0, ENTRY_FRAMES, Math.max(ENTRY_FRAMES, sceneDuration - EXIT_FRAMES), sceneDuration],
+    [0, 1, 1, 0],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
+  );
+}
+
+export function getExitBlur(sceneFrame: number, sceneDuration: number): number {
+  return interpolate(
+    sceneFrame,
+    [Math.max(0, sceneDuration - EXIT_FRAMES), sceneDuration],
+    [0, 8],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
+  );
+}
+
+export function getEntryExitScale(
+  sceneFrame: number,
+  sceneDuration: number,
+  fps: number,
+  from: number,
+  to: number,
+): number {
+  return interpolate(
+    sceneFrame,
+    [0, Math.round(fps * 0.5), sceneDuration],
+    [from, 1, to],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
+  );
+}
+```
+
+- [ ] **Step 4: TitleCard와 SceneRouter 구현**
+
+`packages/video/src/scenes/TitleCard.tsx`:
+
+```tsx
+import React from 'react';
+import { AbsoluteFill, spring, useCurrentFrame, useVideoConfig, interpolate } from 'remotion';
+import type { TitleCardScene } from '../types';
+import { SPRING_PRESETS, getEntryExitOpacity, getExitBlur, getEntryExitScale } from '../utils/animations';
+
+export const TitleCard: React.FC<{ scene: TitleCardScene }> = ({ scene }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const sceneFrame = frame - Math.round(scene.startTime * fps);
+  const sceneDuration = Math.round((scene.endTime - scene.startTime) * fps);
+  const accent = scene.colorAccent ?? '#caff00';
+
+  const titleSpring = spring({ frame: sceneFrame, fps, config: SPRING_PRESETS.gentle });
+  const opacity = getEntryExitOpacity(sceneFrame, sceneDuration);
+  const exitBlur = getExitBlur(sceneFrame, sceneDuration);
+  const exitScale = getEntryExitScale(sceneFrame, sceneDuration, fps, 0.8, 1.08);
+  const subOpacity = interpolate(sceneFrame, [10, 20], [0, 1], { extrapolateRight: 'clamp' });
+  const subY = interpolate(sceneFrame, [10, 25], [30, 0], { extrapolateRight: 'clamp' });
+  const lineWidth = interpolate(sceneFrame, [5, 20], [0, 240], { extrapolateRight: 'clamp' });
+
+  return (
+    <AbsoluteFill
+      style={{
+        background: `radial-gradient(ellipse at center, ${accent}25 0%, rgba(5,8,18,0.95) 70%)`,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        gap: 24, opacity,
+        filter: exitBlur > 0 ? `blur(${exitBlur}px)` : undefined,
+        transform: `scale(${exitScale})`,
+      }}
+    >
+      <div style={{
+        fontSize: 72, fontWeight: 900, fontFamily: "'Pretendard', sans-serif",
+        color: 'white', textAlign: 'center', maxWidth: 920, lineHeight: 1.2, padding: '0 60px',
+        transform: `scale(${interpolate(titleSpring, [0, 1], [0.8, 1])})`,
+        textShadow: `0 4px 40px ${accent}60, 0 2px 8px rgba(0,0,0,0.8)`,
+      }}>{scene.title}</div>
+
+      {scene.subtitle && (
+        <div style={{
+          fontSize: 32, fontWeight: 500, fontFamily: "'Pretendard', sans-serif",
+          color: `${accent}cc`, textAlign: 'center', maxWidth: 860, lineHeight: 1.4,
+          opacity: subOpacity, transform: `translateY(${subY}px)`,
+        }}>{scene.subtitle}</div>
+      )}
+
+      <div style={{
+        width: lineWidth, height: 4, borderRadius: 2, marginTop: 16,
+        background: `linear-gradient(90deg, transparent, ${accent}, transparent)`,
+      }} />
+    </AbsoluteFill>
+  );
+};
+```
+
+`packages/video/src/scenes/SceneRouter.tsx`:
+
+```tsx
+import React from 'react';
+import { AbsoluteFill, useCurrentFrame, useVideoConfig } from 'remotion';
+import type { SceneDirective } from '../types';
+import { TitleCard } from './TitleCard';
+
+export function findActiveScene(
+  scenes: SceneDirective[],
+  currentTime: number,
+): SceneDirective | undefined {
+  return scenes.find((s) => currentTime >= s.startTime && currentTime < s.endTime);
+}
+
+export const SceneRouter: React.FC<{ scenes: SceneDirective[] }> = ({ scenes }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const active = findActiveScene(scenes, frame / fps);
+  return <AbsoluteFill>{active?.type === 'title_card' && <TitleCard scene={active} />}</AbsoluteFill>;
+};
+```
+
+- [ ] **Step 5: 테스트 통과 확인**
+
+```bash
+npx vitest run packages/video/src/__tests__/
+```
+
+기대: 전부 PASS
+
+- [ ] **Step 6: 커밋**
+
+```bash
+git add packages/video/src
+git commit -m "feat: add vertical title card scene and animation utils"
+```
+
+---
+
+## Task 4: 자막과 음성 에너지
+
+**Files:**
+- Create: `packages/video/src/utils/voiceAnalysis.ts`, `packages/video/src/components/Subtitles.tsx`
+- Modify: `packages/video/src/ReelVertical.tsx`
+- Test: `packages/video/src/__tests__/voiceAnalysis.test.ts`
+
+**Interfaces:**
+- Consumes: `SubtitleJSON`, `SceneDirective`, `SceneRouter`, `TitleCard`
+- Produces:
+  - `analyzeVoiceState(subtitles: SubtitleJSON, currentTime: number): { isSpeaking: boolean; energy: number; currentWordIndex: number }`
+  - `<Subtitles subtitles={...} currentTime={...} bottom={...} />`
+  - `ReelVertical`이 배경·오디오·씬·자막을 모두 조립한 상태가 된다
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`packages/video/src/__tests__/voiceAnalysis.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { analyzeVoiceState } from '../utils/voiceAnalysis';
+import type { SubtitleJSON } from '../types';
+
+const subs: SubtitleJSON = [{
+  id: 0, text: '안녕하세요 반갑습니다', start: 0, end: 2,
+  words: [
+    { word: '안녕하세요', start: 0, end: 1 },
+    { word: '반갑습니다', start: 1, end: 2 },
+  ],
+}];
+
+describe('analyzeVoiceState', () => {
+  it('reports silence outside every segment', () => {
+    const s = analyzeVoiceState(subs, 5);
+    expect(s.isSpeaking).toBe(false);
+    expect(s.energy).toBe(0);
+  });
+
+  it('reports speaking inside a segment', () => {
+    expect(analyzeVoiceState(subs, 0.5).isSpeaking).toBe(true);
+  });
+
+  it('tracks the current word index', () => {
+    expect(analyzeVoiceState(subs, 0.5).currentWordIndex).toBe(0);
+    expect(analyzeVoiceState(subs, 1.5).currentWordIndex).toBe(1);
+  });
+
+  it('keeps energy within 0..1', () => {
+    const s = analyzeVoiceState(subs, 1.5);
+    expect(s.energy).toBeGreaterThanOrEqual(0);
+    expect(s.energy).toBeLessThanOrEqual(1);
+  });
+
+  it('handles empty subtitles', () => {
+    expect(analyzeVoiceState([], 1).isSpeaking).toBe(false);
+  });
+});
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+```bash
+npx vitest run packages/video/src/__tests__/voiceAnalysis.test.ts
+```
+
+기대: FAIL — 모듈 없음
+
+- [ ] **Step 3: voiceAnalysis 구현**
+
+원본 `youtube-voice-long-main/packages/remotion-video/src/utils/voiceAnalysis.ts`에서 이식하되, 계획 1에서 쓰지 않는 `pauseDuration`·`segmentProgress`·`speechRate` 반환은 제거하고 위 인터페이스로 줄인다.
+
+`packages/video/src/utils/voiceAnalysis.ts`:
+
+```ts
+import type { SubtitleJSON } from '../types';
+
+export interface VoiceState {
+  isSpeaking: boolean;
+  energy: number;
+  currentWordIndex: number;
+}
+
+const SILENT: VoiceState = { isSpeaking: false, energy: 0, currentWordIndex: 0 };
+
+export function analyzeVoiceState(subtitles: SubtitleJSON, currentTime: number): VoiceState {
+  if (!subtitles?.length) return SILENT;
+
+  const seg = subtitles.find((s) => currentTime >= s.start && currentTime <= s.end);
+  if (!seg) return SILENT;
+
+  const words = seg.words;
+  let currentWordIndex = 0;
+  for (let i = 0; i < words.length; i++) {
+    if (currentTime >= words[i].start) currentWordIndex = i;
+  }
+
+  const segDuration = seg.end - seg.start;
+  const density = segDuration > 0 ? words.length / segDuration : 0;
+  const energy = Math.min(1, Math.max(0, density / 5));
+
+  return { isSpeaking: true, energy, currentWordIndex };
+}
+```
+
+- [ ] **Step 4: Subtitles와 ReelVertical 조립**
+
+`packages/video/src/components/Subtitles.tsx`:
+
+```tsx
+import React from 'react';
+import { AbsoluteFill } from 'remotion';
+import type { SubtitleJSON } from '../types';
+import { analyzeVoiceState } from '../utils/voiceAnalysis';
+
+interface Props { subtitles: SubtitleJSON; currentTime: number; bottom: number }
+
+export const Subtitles: React.FC<Props> = ({ subtitles, currentTime, bottom }) => {
+  const seg = subtitles.find((s) => currentTime >= s.start && currentTime <= s.end);
+  if (!seg) return null;
+  const { currentWordIndex } = analyzeVoiceState(subtitles, currentTime);
+
+  return (
+    <AbsoluteFill style={{ justifyContent: 'flex-end', alignItems: 'center', paddingBottom: bottom }}>
+      <div style={{
+        display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 12,
+        maxWidth: 940, padding: '0 40px',
+        fontFamily: "'Pretendard', sans-serif", fontSize: 46, fontWeight: 800, lineHeight: 1.35,
+      }}>
+        {seg.words.map((w, i) => (
+          <span key={`${w.start}-${i}`} style={{
+            color: i === currentWordIndex ? '#caff00' : 'white',
+            textShadow: '0 2px 12px rgba(0,0,0,0.9)',
+          }}>{w.word}</span>
+        ))}
+      </div>
+    </AbsoluteFill>
+  );
+};
+```
+
+`packages/video/src/ReelVertical.tsx` 전체 교체:
+
+```tsx
+import React from 'react';
+import { AbsoluteFill, Audio, useCurrentFrame, useVideoConfig } from 'remotion';
+import type { ReelProps } from './types';
+import { SceneRouter } from './scenes/SceneRouter';
+import { Subtitles } from './components/Subtitles';
+
+export const ReelVertical: React.FC<ReelProps> = ({ subtitles, audioUrl, scenes }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const currentTime = frame / fps;
+
+  return (
+    <AbsoluteFill style={{ backgroundColor: '#0a0a0a' }}>
+      {audioUrl && <Audio src={audioUrl} />}
+      <AbsoluteFill style={{ zIndex: 10 }}><SceneRouter scenes={scenes} /></AbsoluteFill>
+      <AbsoluteFill style={{ zIndex: 20 }}>
+        <Subtitles subtitles={subtitles} currentTime={currentTime} bottom={160} />
+      </AbsoluteFill>
+    </AbsoluteFill>
+  );
+};
+```
+
+- [ ] **Step 5: 테스트 통과 및 실제 렌더 확인**
+
+```bash
+npx vitest run packages/video/src/__tests__/
+npx remotion render packages/video/src/index.ts ReelVertical /tmp/reel.mp4 \
+  --props='{"subtitles":[{"id":0,"text":"무릎 통증 잡는 법","start":0,"end":2,"words":[{"word":"무릎","start":0,"end":0.7},{"word":"통증","start":0.7,"end":1.4},{"word":"잡는 법","start":1.4,"end":2}]}],"audioUrl":null,"scenes":[{"type":"title_card","startTime":0,"endTime":2,"title":"무릎 통증 잡는 법"}],"durationInSeconds":2}'
+```
+
+기대: 테스트 PASS, 1080×1920 MP4에 타이틀과 자막이 보인다. 재생해서 눈으로 확인한다.
+
+- [ ] **Step 6: 커밋**
+
+```bash
+git add packages/video/src
+git commit -m "feat: add word-level subtitles and voice energy analysis"
+```
+
+---
+
+## Task 5: 잡 저장소 (인메모리 Map 대체)
+
+`lib/mock-jobs.ts`의 인메모리 `Map`은 서버 재시작 시 사라지고, 서버리스에서는 요청마다 인스턴스가 달라 아예 동작하지 않는다. 배포가 목표이므로 반드시 교체한다.
+
+**Files:**
+- Create: `lib/store/types.ts`, `lib/store/file-store.ts`, `lib/jobs.ts`
+- Test: `lib/__tests__/jobs.test.ts`
+
+**Interfaces:**
+- Consumes: 없음
+- Produces:
+  - `RenderJob { id: string; projectId: string; ownerId: string; engine: 'remotion'; status: 'queued'|'claimed'|'rendering'|'completed'|'failed'; progress: number; claimedAt: string|null; resultUrl: string|null; error: string|null; createdAt: string }`
+  - `enqueueJob(input: { projectId: string; ownerId: string }): Promise<RenderJob>`
+  - `claimNextJob(now?: Date): Promise<RenderJob | null>`
+  - `updateJob(id: string, patch: Partial<Pick<RenderJob,'status'|'progress'|'resultUrl'|'error'>>): Promise<RenderJob | null>`
+  - `getJob(id: string): Promise<RenderJob | null>`
+  - `STALE_CLAIM_MS = 15 * 60 * 1000`
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`lib/__tests__/jobs.test.ts`:
+
+```ts
+import { describe, it, expect, beforeEach } from 'vitest';
+import { enqueueJob, claimNextJob, updateJob, getJob, STALE_CLAIM_MS } from '../jobs';
+import { resetStoreForTests } from '../store/file-store';
+
+beforeEach(async () => { await resetStoreForTests(); });
+
+describe('job queue', () => {
+  it('enqueues a job in queued state', async () => {
+    const job = await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
+    expect(job.status).toBe('queued');
+    expect(job.progress).toBe(0);
+  });
+
+  it('claims the oldest queued job exactly once', async () => {
+    await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
+    await enqueueJob({ projectId: 'p2', ownerId: 'u1' });
+    const first = await claimNextJob();
+    const second = await claimNextJob();
+    expect(first?.projectId).toBe('p1');
+    expect(second?.projectId).toBe('p2');
+    expect(await claimNextJob()).toBeNull();
+  });
+
+  it('marks claimed jobs so they are not handed out again', async () => {
+    await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
+    const claimed = await claimNextJob();
+    expect(claimed?.status).toBe('claimed');
+    expect(claimed?.claimedAt).not.toBeNull();
+  });
+
+  it('reclaims a job whose claim went stale', async () => {
+    await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
+    const claimed = await claimNextJob(new Date('2026-01-01T00:00:00Z'));
+    expect(claimed).not.toBeNull();
+    const later = new Date(Date.parse('2026-01-01T00:00:00Z') + STALE_CLAIM_MS + 1000);
+    const reclaimed = await claimNextJob(later);
+    expect(reclaimed?.id).toBe(claimed!.id);
+  });
+
+  it('records completion', async () => {
+    const job = await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
+    await updateJob(job.id, { status: 'completed', progress: 100, resultUrl: '/out.mp4' });
+    const found = await getJob(job.id);
+    expect(found?.status).toBe('completed');
+    expect(found?.resultUrl).toBe('/out.mp4');
+  });
+});
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+```bash
+npx vitest run lib/__tests__/jobs.test.ts
+```
+
+기대: FAIL — 모듈 없음
+
+- [ ] **Step 3: 저장소 인터페이스와 파일 구현체**
+
+`lib/store/types.ts`:
+
+```ts
+export interface Store {
+  read<T>(key: string, fallback: T): Promise<T>;
+  write<T>(key: string, value: T): Promise<void>;
+}
+```
+
+`lib/store/file-store.ts`:
+
+```ts
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import type { Store } from './types';
+
+const dataDir = process.env.STORE_DIR ?? path.join(process.cwd(), '.local-data');
+
+export const fileStore: Store = {
+  async read<T>(key: string, fallback: T): Promise<T> {
+    try {
+      return JSON.parse(await readFile(path.join(dataDir, `${key}.json`), 'utf8')) as T;
+    } catch {
+      return fallback;
+    }
+  },
+  async write<T>(key: string, value: T): Promise<void> {
+    await mkdir(dataDir, { recursive: true });
+    await writeFile(path.join(dataDir, `${key}.json`), JSON.stringify(value, null, 2), 'utf8');
+  },
+};
+
+export async function resetStoreForTests(): Promise<void> {
+  await fileStore.write('jobs', []);
+}
+```
+
+- [ ] **Step 4: 큐 로직 구현**
+
+`lib/jobs.ts`:
+
+```ts
+import { fileStore } from './store/file-store';
+
+export const STALE_CLAIM_MS = 15 * 60 * 1000;
+
+export interface RenderJob {
+  id: string;
+  projectId: string;
+  ownerId: string;
+  engine: 'remotion';
+  status: 'queued' | 'claimed' | 'rendering' | 'completed' | 'failed';
+  progress: number;
+  claimedAt: string | null;
+  resultUrl: string | null;
+  error: string | null;
+  createdAt: string;
+}
+
+const KEY = 'jobs';
+const read = () => fileStore.read<RenderJob[]>(KEY, []);
+const write = (jobs: RenderJob[]) => fileStore.write(KEY, jobs);
+
+export async function enqueueJob(input: { projectId: string; ownerId: string }): Promise<RenderJob> {
+  const jobs = await read();
+  const job: RenderJob = {
+    id: `job_${crypto.randomUUID().replaceAll('-', '').slice(0, 16)}`,
+    projectId: input.projectId,
+    ownerId: input.ownerId,
+    engine: 'remotion',
+    status: 'queued',
+    progress: 0,
+    claimedAt: null,
+    resultUrl: null,
+    error: null,
+    createdAt: new Date().toISOString(),
+  };
+  await write([...jobs, job]);
+  return job;
+}
+
+function isClaimable(job: RenderJob, now: Date): boolean {
+  if (job.status === 'queued') return true;
+  if (job.status !== 'claimed' && job.status !== 'rendering') return false;
+  if (!job.claimedAt) return false;
+  return now.getTime() - Date.parse(job.claimedAt) > STALE_CLAIM_MS;
+}
+
+export async function claimNextJob(now: Date = new Date()): Promise<RenderJob | null> {
+  const jobs = await read();
+  const target = jobs
+    .filter((j) => isClaimable(j, now))
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))[0];
+  if (!target) return null;
+
+  const claimed: RenderJob = { ...target, status: 'claimed', claimedAt: now.toISOString() };
+  await write(jobs.map((j) => (j.id === claimed.id ? claimed : j)));
+  return claimed;
+}
+
+export async function updateJob(
+  id: string,
+  patch: Partial<Pick<RenderJob, 'status' | 'progress' | 'resultUrl' | 'error'>>,
+): Promise<RenderJob | null> {
+  const jobs = await read();
+  const next = jobs.map((j) => (j.id === id ? { ...j, ...patch } : j));
+  await write(next);
+  return next.find((j) => j.id === id) ?? null;
+}
+
+export async function getJob(id: string): Promise<RenderJob | null> {
+  return (await read()).find((j) => j.id === id) ?? null;
+}
+```
+
+- [ ] **Step 5: 테스트 통과 확인**
+
+```bash
+npx vitest run lib/__tests__/jobs.test.ts
+```
+
+기대: 5개 PASS
+
+- [ ] **Step 6: 커밋**
+
+```bash
+git add lib/store lib/jobs.ts lib/__tests__
+git commit -m "feat: replace in-memory job map with persistent job queue"
+```
+
+---
+
+## Task 6: 워커 API 라우트
+
+**Files:**
+- Create: `app/api/jobs/next/route.ts`, `app/api/jobs/[id]/route.ts`
+- Test: `app/api/__tests__/jobs-route.test.ts`
+
+**Interfaces:**
+- Consumes: `claimNextJob`, `updateJob`, `getJob` (Task 5), `getProject`/`createProject` (Task 11)
+
+> **순서 주의**: 이 Task는 `lib/projects.ts`를 사용한다. Task 11을 먼저 하거나, Task 11의 Step 3에 있는 `lib/projects.ts`만 앞당겨 만든 뒤 진행한다.
+- Produces:
+  - `POST /api/jobs/next` — 헤더 `x-worker-token`. 200 `{ job: RenderJob | null, project: Project | null }`, 401 미인증. **워커가 파이프라인을 돌리려면 대본이 필요하므로 프로젝트를 함께 넘긴다**
+  - `PATCH /api/jobs/:id` — 헤더 `x-worker-token`. 본문 `{ status?, progress?, resultUrl?, error? }`
+  - `assertWorker(request: Request): boolean`
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`app/api/__tests__/jobs-route.test.ts`:
+
+```ts
+import { describe, it, expect, beforeEach } from 'vitest';
+import { POST as claimRoute } from '../jobs/next/route';
+import { enqueueJob } from '@/lib/jobs';
+import { resetStoreForTests } from '@/lib/store/file-store';
+
+beforeEach(async () => {
+  process.env.WORKER_TOKEN = 'test-token';
+  await resetStoreForTests();
+});
+
+function req(token?: string) {
+  return new Request('http://localhost/api/jobs/next', {
+    method: 'POST',
+    headers: token ? { 'x-worker-token': token } : {},
+  });
+}
+
+describe('POST /api/jobs/next', () => {
+  it('rejects a request with no token', async () => {
+    expect((await claimRoute(req())).status).toBe(401);
+  });
+
+  it('rejects a wrong token', async () => {
+    expect((await claimRoute(req('nope'))).status).toBe(401);
+  });
+
+  it('returns null when the queue is empty', async () => {
+    const res = await claimRoute(req('test-token'));
+    expect(res.status).toBe(200);
+    expect((await res.json()).job).toBeNull();
+  });
+
+  it('hands out a queued job', async () => {
+    await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
+    const res = await claimRoute(req('test-token'));
+    expect((await res.json()).job.projectId).toBe('p1');
+  });
+
+  it('includes the project so the worker has the script', async () => {
+    const { createProject } = await import('@/lib/projects');
+    const project = await createProject({ ownerId: 'u1', script: '무릎 통증 팁' });
+    await enqueueJob({ projectId: project.id, ownerId: 'u1' });
+    const body = await (await claimRoute(req('test-token'))).json();
+    expect(body.project.script).toBe('무릎 통증 팁');
+  });
+});
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+```bash
+npx vitest run app/api/__tests__/jobs-route.test.ts
+```
+
+기대: FAIL — 모듈 없음
+
+- [ ] **Step 3: 라우트 구현**
+
+`app/api/jobs/next/route.ts`:
+
+```ts
+import { NextResponse } from 'next/server';
+import { claimNextJob } from '@/lib/jobs';
+import { getProject } from '@/lib/projects';
+
+export const dynamic = 'force-dynamic';
+
+export function assertWorker(request: Request): boolean {
+  const expected = process.env.WORKER_TOKEN;
+  if (!expected) return false;
+  return request.headers.get('x-worker-token') === expected;
+}
+
+export async function POST(request: Request) {
+  if (!assertWorker(request)) {
+    return NextResponse.json({ error: '인증되지 않은 워커입니다.' }, { status: 401 });
+  }
+  const job = await claimNextJob();
+  if (!job) return NextResponse.json({ job: null, project: null });
+  const project = await getProject(job.projectId);
+  return NextResponse.json({ job, project });
+}
+```
+
+`app/api/jobs/[id]/route.ts`:
+
+```ts
+import { NextResponse } from 'next/server';
+import { updateJob, getJob } from '@/lib/jobs';
+import { assertWorker } from '../next/route';
+
+export const dynamic = 'force-dynamic';
+
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  if (!assertWorker(request)) {
+    return NextResponse.json({ error: '인증되지 않은 워커입니다.' }, { status: 401 });
+  }
+  const { id } = await params;
+  const patch = await request.json();
+  const job = await updateJob(id, patch);
+  if (!job) return NextResponse.json({ error: '존재하지 않는 작업입니다.' }, { status: 404 });
+  return NextResponse.json({ job });
+}
+
+export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const job = await getJob(id);
+  if (!job) return NextResponse.json({ error: '존재하지 않는 작업입니다.' }, { status: 404 });
+  return NextResponse.json({
+    status: job.status, progress: job.progress, resultUrl: job.resultUrl, error: job.error,
+  });
+}
+```
+
+- [ ] **Step 4: 테스트 통과 확인**
+
+```bash
+npx vitest run app/api/__tests__/jobs-route.test.ts
+```
+
+기대: 4개 PASS
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add app/api/jobs app/api/__tests__
+git commit -m "feat: add worker job claim and report routes"
+```
+
+---
+
+## Task 7: TTS와 STT 파이프라인
+
+**Files:**
+- Create: `lib/pipeline/tts.ts`, `lib/pipeline/stt.ts`
+- Test: `lib/__tests__/stt.test.ts`
+
+**Interfaces:**
+- Consumes: `lib/fish-audio-client.ts`의 `synthesizeFishSpeech` (기존 코드, 수정하지 않음)
+- Produces:
+  - `synthesizeNarration(input: { text: string; referenceId: string; speakingSpeed?: number; instruct?: string }): Promise<{ audioPath: string; durationSec: number }>`
+  - `transcribeToSubtitles(audioPath: string): Promise<SubtitleJSON>`
+  - `parseWhisperJson(raw: unknown): SubtitleJSON`
+
+STT는 워커(맥)에서 `whisper.cpp`를 로컬 실행한다. 사전 설치가 필요하다:
+
+```bash
+brew install whisper-cpp
+whisper-cpp --version
+```
+
+모델은 `ggml-base` 이상을 쓴다. 한국어 정확도가 낮으면 `ggml-medium`으로 올린다.
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`lib/__tests__/stt.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { parseWhisperJson } from '../pipeline/stt';
+
+const whisperOutput = {
+  transcription: [
+    {
+      text: ' 무릎 통증',
+      offsets: { from: 0, to: 1400 },
+      tokens: [
+        { text: ' 무릎', offsets: { from: 0, to: 700 } },
+        { text: ' 통증', offsets: { from: 700, to: 1400 } },
+      ],
+    },
+  ],
+};
+
+describe('parseWhisperJson', () => {
+  it('converts milliseconds to seconds', () => {
+    const [seg] = parseWhisperJson(whisperOutput);
+    expect(seg.start).toBe(0);
+    expect(seg.end).toBe(1.4);
+  });
+
+  it('extracts word-level timings', () => {
+    const [seg] = parseWhisperJson(whisperOutput);
+    expect(seg.words).toHaveLength(2);
+    expect(seg.words[0].word).toBe('무릎');
+    expect(seg.words[1].start).toBe(0.7);
+  });
+
+  it('trims surrounding whitespace from text', () => {
+    expect(parseWhisperJson(whisperOutput)[0].text).toBe('무릎 통증');
+  });
+
+  it('returns an empty array for malformed input', () => {
+    expect(parseWhisperJson({})).toEqual([]);
+    expect(parseWhisperJson(null)).toEqual([]);
+  });
+});
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+```bash
+npx vitest run lib/__tests__/stt.test.ts
+```
+
+기대: FAIL — 모듈 없음
+
+- [ ] **Step 3: STT 구현**
+
+`lib/pipeline/stt.ts`:
+
+```ts
+import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { promisify } from 'node:util';
+import type { SubtitleJSON, SubtitleSegment } from '@studio/video/src/types';
+
+const run = promisify(execFile);
+
+interface WhisperToken { text: string; offsets: { from: number; to: number } }
+interface WhisperSegment { text: string; offsets: { from: number; to: number }; tokens?: WhisperToken[] }
+
+export function parseWhisperJson(raw: unknown): SubtitleJSON {
+  const segments = (raw as { transcription?: WhisperSegment[] })?.transcription;
+  if (!Array.isArray(segments)) return [];
+
+  return segments.map((seg, id): SubtitleSegment => ({
+    id,
+    text: seg.text.trim(),
+    start: seg.offsets.from / 1000,
+    end: seg.offsets.to / 1000,
+    words: (seg.tokens ?? [])
+      .map((t) => ({ word: t.text.trim(), start: t.offsets.from / 1000, end: t.offsets.to / 1000 }))
+      .filter((w) => w.word.length > 0),
+  }));
+}
+
+export async function transcribeToSubtitles(audioPath: string): Promise<SubtitleJSON> {
+  const outPrefix = `${audioPath}.whisper`;
+  await run('whisper-cpp', [
+    '-m', process.env.WHISPER_MODEL ?? 'ggml-base.bin',
+    '-l', 'ko', '-oj', '-ml', '1', '-of', outPrefix, '-f', audioPath,
+  ]);
+  return parseWhisperJson(JSON.parse(await readFile(`${outPrefix}.json`, 'utf8')));
+}
+```
+
+`lib/pipeline/tts.ts`:
+
+```ts
+import { synthesizeFishSpeech } from '@/lib/fish-audio-client';
+import path from 'node:path';
+
+export async function synthesizeNarration(input: {
+  text: string; referenceId: string; speakingSpeed?: number; instruct?: string;
+}): Promise<{ audioPath: string; durationSec: number }> {
+  const result = await synthesizeFishSpeech(input);
+  if (result.status === 'error' || !result.audioUrl) {
+    throw new Error(result.error ?? '음성 합성에 실패했습니다.');
+  }
+  return {
+    audioPath: path.join(process.cwd(), 'public', result.audioUrl),
+    durationSec: result.durationSec ?? 0,
+  };
+}
+```
+
+- [ ] **Step 4: 테스트 통과 확인**
+
+```bash
+npx vitest run lib/__tests__/stt.test.ts
+```
+
+기대: 4개 PASS
+
+- [ ] **Step 5: whisper가 실제로 도는지 수동 확인**
+
+```bash
+whisper-cpp -m ggml-base.bin -l ko -oj -ml 1 -of /tmp/t -f <실제_음성.wav> && head -40 /tmp/t.json
+```
+
+기대: `transcription` 배열에 `offsets`와 `tokens`가 들어 있다. 형식이 다르면 `parseWhisperJson`과 테스트를 실제 출력에 맞춰 고친다.
+
+- [ ] **Step 6: 커밋**
+
+```bash
+git add lib/pipeline lib/__tests__/stt.test.ts
+git commit -m "feat: add TTS wrapper and whisper-based word timing extraction"
+```
+
+---
+
+## Task 8: 씬 지시서 생성과 폴백
+
+LLM 실패로 전체 파이프라인이 멈추면 안 된다. 폴백은 선택이 아니라 필수다.
+
+**Files:**
+- Create: `lib/pipeline/scenes.ts`
+- Test: `lib/__tests__/scenes.test.ts`
+
+**Interfaces:**
+- Consumes: `SubtitleJSON`, `SceneDirective` (Task 2)
+- Produces:
+  - `buildFallbackScenes(subtitles: SubtitleJSON, script: string): SceneDirective[]`
+  - `generateScenes(input: { script: string; subtitles: SubtitleJSON }): Promise<SceneDirective[]>`
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`lib/__tests__/scenes.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { buildFallbackScenes } from '../pipeline/scenes';
+import type { SubtitleJSON } from '@studio/video/src/types';
+
+const subs: SubtitleJSON = [
+  { id: 0, text: '무릎 통증', start: 0, end: 2, words: [] },
+  { id: 1, text: '이렇게 잡으세요', start: 2, end: 5, words: [] },
+];
+
+describe('buildFallbackScenes', () => {
+  it('produces one title card spanning the whole audio', () => {
+    const scenes = buildFallbackScenes(subs, '무릎 통증 이렇게 잡으세요');
+    expect(scenes).toHaveLength(1);
+    expect(scenes[0].type).toBe('title_card');
+    expect(scenes[0].startTime).toBe(0);
+    expect(scenes[0].endTime).toBe(5);
+  });
+
+  it('uses the opening line as the title', () => {
+    expect(buildFallbackScenes(subs, '대본')[0].title).toBe('무릎 통증');
+  });
+
+  it('falls back to the script when there are no subtitles', () => {
+    const scenes = buildFallbackScenes([], '무릎 통증 잡는 법');
+    expect(scenes[0].title).toBe('무릎 통증 잡는 법');
+    expect(scenes[0].endTime).toBeGreaterThan(0);
+  });
+
+  it('truncates a very long title', () => {
+    const long = 'ㄱ'.repeat(200);
+    expect(buildFallbackScenes([], long)[0].title.length).toBeLessThanOrEqual(40);
+  });
+});
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+```bash
+npx vitest run lib/__tests__/scenes.test.ts
+```
+
+기대: FAIL — 모듈 없음
+
+- [ ] **Step 3: 구현**
+
+`lib/pipeline/scenes.ts`:
+
+```ts
+import type { SubtitleJSON, SceneDirective } from '@studio/video/src/types';
+
+const MAX_TITLE = 40;
+
+function truncate(text: string): string {
+  const clean = text.trim();
+  return clean.length <= MAX_TITLE ? clean : `${clean.slice(0, MAX_TITLE - 1)}…`;
+}
+
+export function buildFallbackScenes(subtitles: SubtitleJSON, script: string): SceneDirective[] {
+  const end = subtitles.length ? subtitles[subtitles.length - 1].end : 5;
+  const title = truncate(subtitles.length ? subtitles[0].text : script);
+  return [{ type: 'title_card', startTime: 0, endTime: end, title, colorAccent: '#caff00' }];
+}
+
+export async function generateScenes(input: {
+  script: string; subtitles: SubtitleJSON;
+}): Promise<SceneDirective[]> {
+  // 계획 1에서는 씬이 title_card 1종이므로 LLM 호출 없이 폴백만 사용한다.
+  // 계획 2에서 씬 6종을 구현할 때 여기에 LLM 경로를 추가하고,
+  // 실패 시 buildFallbackScenes로 되돌린다.
+  return buildFallbackScenes(input.subtitles, input.script);
+}
+```
+
+- [ ] **Step 4: 테스트 통과 확인**
+
+```bash
+npx vitest run lib/__tests__/scenes.test.ts
+```
+
+기대: 4개 PASS
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add lib/pipeline/scenes.ts lib/__tests__/scenes.test.ts
+git commit -m "feat: add scene directive generation with fallback"
+```
+
+---
+
+## Task 9: 엔진 인터페이스와 렌더 워커
+
+스펙 §5의 핵심 약속인 "엔진을 갈아끼울 수 있는 구조"를 여기서 실제로 만든다. 워커가 잡의 전 생애를 소유하므로 **TTS·STT·씬생성·렌더가 모두 워커에서 돈다.** Vercel에서는 whisper를 돌릴 수 없으므로 이 배치가 필수다.
+
+> **스펙과의 차이**: 스펙 §5는 `prepare`/`submit`/`poll` 3단계로 적혀 있으나, 워커가 잡을 소유하는 구조에서는 `produce()` 한 번으로 충분하다. Higgsfield 어댑터는 내부에서 제출·폴링을 수행하면 된다. 이 Task의 마지막에 스펙 §5를 이 형태로 갱신한다.
+
+**Files:**
+- Create: `lib/engines/types.ts`, `lib/engines/remotion.ts`, `worker/index.ts`, `worker/render.ts`, `worker/package.json`
+- Modify: `docs/superpowers/specs/2026-08-26-unified-video-studio-design.md` (§5)
+- Test: `worker/__tests__/loop.test.ts`, `lib/__tests__/engines.test.ts`
+
+**Interfaces:**
+- Consumes: `POST /api/jobs/next`·`PATCH /api/jobs/:id` (Task 6), `synthesizeNarration` (Task 7), `transcribeToSubtitles` (Task 7), `generateScenes` (Task 8), `ReelProps` (Task 2)
+- Produces:
+  - `EngineInput { projectId: string; script: string; voiceReferenceId: string; outPath: string }`
+  - `EngineResult { outputPath: string; durationSec: number }`
+  - `EngineCapabilities { aspectRatios: string[]; maxDurationSec: number; lipSync: boolean; costModel: 'compute'|'credits'; requiresUserKey: boolean }`
+  - `VideoEngine { id: EngineId; capabilities: EngineCapabilities; produce(input: EngineInput, onProgress: (pct: number) => void): Promise<EngineResult> }`
+  - `remotionEngine: VideoEngine`
+  - `getEngine(id: EngineId): VideoEngine`
+  - `pollOnce(deps: PollDeps): Promise<'idle' | 'rendered' | 'failed'>`
+  - `renderReel(props: ReelProps, outPath: string): Promise<void>`
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`lib/__tests__/engines.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { getEngine } from '../engines/remotion';
+
+describe('engine registry', () => {
+  it('returns the remotion engine', () => {
+    expect(getEngine('remotion').id).toBe('remotion');
+  });
+
+  it('declares vertical-only, compute-cost capabilities', () => {
+    const caps = getEngine('remotion').capabilities;
+    expect(caps.aspectRatios).toEqual(['9:16']);
+    expect(caps.costModel).toBe('compute');
+    expect(caps.lipSync).toBe(false);
+    expect(caps.requiresUserKey).toBe(false);
+  });
+
+  it('throws for an engine that is not implemented yet', () => {
+    expect(() => getEngine('higgsfield')).toThrow(/구현되지 않은 엔진/);
+  });
+});
+```
+
+`worker/__tests__/loop.test.ts`:
+
+```ts
+import { describe, it, expect, vi } from 'vitest';
+import { pollOnce } from '../index';
+
+const job = { id: 'job1', projectId: 'p1', engine: 'remotion' as const };
+const project = { id: 'p1', script: '무릎 통증 팁' };
+
+describe('pollOnce', () => {
+  it('does nothing when the queue is empty', async () => {
+    const produce = vi.fn();
+    const result = await pollOnce({
+      claim: async () => ({ job: null, project: null }), produce, report: vi.fn(),
+    });
+    expect(result).toBe('idle');
+    expect(produce).not.toHaveBeenCalled();
+  });
+
+  it('produces a reel and reports completion', async () => {
+    const report = vi.fn();
+    const result = await pollOnce({
+      claim: async () => ({ job, project }),
+      produce: async () => ({ outputPath: '/out/job1.mp4', durationSec: 12 }),
+      report,
+    });
+    expect(result).toBe('rendered');
+    expect(report).toHaveBeenCalledWith('job1', {
+      status: 'completed', progress: 100, resultUrl: '/out/job1.mp4',
+    });
+  });
+
+  it('reports failure instead of throwing', async () => {
+    const report = vi.fn();
+    const result = await pollOnce({
+      claim: async () => ({ job, project }),
+      produce: async () => { throw new Error('렌더 실패'); },
+      report,
+    });
+    expect(result).toBe('failed');
+    expect(report).toHaveBeenCalledWith('job1', { status: 'failed', error: '렌더 실패' });
+  });
+
+  it('fails the job when the project is missing', async () => {
+    const report = vi.fn();
+    const result = await pollOnce({
+      claim: async () => ({ job, project: null }), produce: vi.fn(), report,
+    });
+    expect(result).toBe('failed');
+    expect(report).toHaveBeenCalledWith('job1', {
+      status: 'failed', error: '프로젝트를 찾을 수 없습니다.',
+    });
+  });
+});
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+```bash
+npx vitest run lib/__tests__/engines.test.ts worker/__tests__/loop.test.ts
+```
+
+기대: FAIL — 모듈 없음
+
+- [ ] **Step 3: 엔진 인터페이스 정의**
+
+`lib/engines/types.ts`:
+
+```ts
+export type EngineId = 'remotion' | 'higgsfield' | 'whiteboard';
+
+export interface EngineCapabilities {
+  aspectRatios: string[];
+  maxDurationSec: number;
+  lipSync: boolean;
+  costModel: 'compute' | 'credits';
+  requiresUserKey: boolean;
+}
+
+export interface EngineInput {
+  projectId: string;
+  script: string;
+  voiceReferenceId: string;
+  outPath: string;
+}
+
+export interface EngineResult {
+  outputPath: string;
+  durationSec: number;
+}
+
+export interface VideoEngine {
+  id: EngineId;
+  capabilities: EngineCapabilities;
+  produce(input: EngineInput, onProgress: (pct: number) => void): Promise<EngineResult>;
+}
+```
+
+- [ ] **Step 4: Remotion 어댑터 구현 — 전체 파이프라인이 여기 있다**
+
+`lib/engines/remotion.ts`:
+
+```ts
+import { synthesizeNarration } from '@/lib/pipeline/tts';
+import { transcribeToSubtitles } from '@/lib/pipeline/stt';
+import { generateScenes } from '@/lib/pipeline/scenes';
+import { renderReel } from '../../worker/render';
+import type { EngineId, EngineInput, EngineResult, VideoEngine } from './types';
+
+export const remotionEngine: VideoEngine = {
+  id: 'remotion',
+  capabilities: {
+    aspectRatios: ['9:16'],
+    maxDurationSec: 180,
+    lipSync: false,
+    costModel: 'compute',
+    requiresUserKey: false,
+  },
+
+  async produce(input: EngineInput, onProgress): Promise<EngineResult> {
+    onProgress(10);
+    const { audioPath } = await synthesizeNarration({
+      text: input.script,
+      referenceId: input.voiceReferenceId,
+    });
+
+    onProgress(35);
+    const subtitles = await transcribeToSubtitles(audioPath);
+
+    onProgress(55);
+    const scenes = await generateScenes({ script: input.script, subtitles });
+    const durationSec = subtitles.length ? subtitles[subtitles.length - 1].end : 5;
+
+    onProgress(70);
+    await renderReel(
+      { subtitles, audioUrl: audioPath, scenes, durationInSeconds: durationSec },
+      input.outPath,
+    );
+
+    onProgress(95);
+    return { outputPath: input.outPath, durationSec };
+  },
+};
+
+const REGISTRY: Partial<Record<EngineId, VideoEngine>> = { remotion: remotionEngine };
+
+export function getEngine(id: EngineId): VideoEngine {
+  const engine = REGISTRY[id];
+  if (!engine) throw new Error(`구현되지 않은 엔진입니다: ${id}`);
+  return engine;
+}
+```
+
+- [ ] **Step 5: 워커 루프 구현**
+
+`worker/render.ts`:
+
+```ts
+import { bundle } from '@remotion/bundler';
+import { renderMedia, selectComposition } from '@remotion/renderer';
+import path from 'node:path';
+import type { ReelProps } from '@studio/video/src/types';
+
+let bundlePromise: Promise<string> | null = null;
+
+function getBundle(): Promise<string> {
+  bundlePromise ??= bundle({
+    entryPoint: path.resolve(process.cwd(), 'packages/video/src/index.ts'),
+  });
+  return bundlePromise;
+}
+
+export async function renderReel(props: ReelProps, outPath: string): Promise<void> {
+  const serveUrl = await getBundle();
+  const inputProps = props as unknown as Record<string, unknown>;
+  const composition = await selectComposition({ serveUrl, id: 'ReelVertical', inputProps });
+  await renderMedia({ composition, serveUrl, codec: 'h264', outputLocation: outPath, inputProps });
+}
+```
+
+`worker/index.ts`:
+
+```ts
+import path from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { getEngine } from '../lib/engines/remotion';
+import type { EngineId, EngineResult } from '../lib/engines/types';
+
+export interface ClaimedJob { id: string; projectId: string; engine: EngineId }
+export interface ClaimedProject { id: string; script: string }
+
+export interface PollDeps {
+  claim: () => Promise<{ job: ClaimedJob | null; project: ClaimedProject | null }>;
+  produce: (job: ClaimedJob, project: ClaimedProject) => Promise<EngineResult>;
+  report: (id: string, patch: Record<string, unknown>) => Promise<void> | void;
+}
+
+export async function pollOnce(deps: PollDeps): Promise<'idle' | 'rendered' | 'failed'> {
+  const { job, project } = await deps.claim();
+  if (!job) return 'idle';
+
+  if (!project) {
+    await deps.report(job.id, { status: 'failed', error: '프로젝트를 찾을 수 없습니다.' });
+    return 'failed';
+  }
+
+  try {
+    const result = await deps.produce(job, project);
+    await deps.report(job.id, {
+      status: 'completed', progress: 100, resultUrl: result.outputPath,
+    });
+    return 'rendered';
+  } catch (error) {
+    await deps.report(job.id, {
+      status: 'failed',
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return 'failed';
+  }
+}
+
+// ── 실제 폴링 루프 (WORKER_RUN=1 일 때만 동작) ──
+
+const API = process.env.APP_URL ?? 'http://localhost:3000';
+const TOKEN = process.env.WORKER_TOKEN ?? '';
+const VOICE_ID = process.env.FISH_REFERENCE_ID ?? '';
+const RENDER_DIR = path.join(process.cwd(), '.local-data', 'renders');
+const INTERVAL_MS = 5000;
+
+async function claimFromApi() {
+  const res = await fetch(`${API}/api/jobs/next`, {
+    method: 'POST', headers: { 'x-worker-token': TOKEN },
+  });
+  if (!res.ok) return { job: null, project: null };
+  return res.json();
+}
+
+async function reportToApi(id: string, patch: Record<string, unknown>) {
+  await fetch(`${API}/api/jobs/${id}`, {
+    method: 'PATCH',
+    headers: { 'x-worker-token': TOKEN, 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+}
+
+async function produceWithEngine(job: ClaimedJob, project: ClaimedProject) {
+  await mkdir(RENDER_DIR, { recursive: true });
+  return getEngine(job.engine).produce(
+    {
+      projectId: project.id,
+      script: project.script,
+      voiceReferenceId: VOICE_ID,
+      outPath: path.join(RENDER_DIR, `${job.id}.mp4`),
+    },
+    (pct) => { void reportToApi(job.id, { status: 'rendering', progress: pct }); },
+  );
+}
+
+if (process.env.WORKER_RUN === '1') {
+  console.log(`[worker] ${API} 폴링 시작 (${INTERVAL_MS}ms 간격)`);
+  let running = false;
+  setInterval(async () => {
+    if (running) return;          // 이전 렌더가 끝나기 전에 새 잡을 잡지 않는다
+    running = true;
+    try {
+      const result = await pollOnce({
+        claim: claimFromApi, produce: produceWithEngine, report: reportToApi,
+      });
+      if (result !== 'idle') console.log(`[worker] ${result}`);
+    } catch (error) {
+      console.error('[worker] 폴링 실패', error);
+    } finally {
+      running = false;
+    }
+  }, INTERVAL_MS);
+}
+```
+
+`worker/package.json`:
+
+```json
+{
+  "name": "@studio/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "WORKER_RUN=1 tsx index.ts" },
+  "dependencies": { "tsx": "^4.0.0" }
+}
+```
+
+- [ ] **Step 6: 테스트 통과 확인**
+
+```bash
+npx vitest run lib/__tests__/engines.test.ts worker/__tests__/loop.test.ts
+```
+
+기대: 엔진 3개 + 루프 4개 = 7개 PASS
+
+- [ ] **Step 7: 스펙 §5를 실제 인터페이스에 맞춰 갱신**
+
+`docs/superpowers/specs/2026-08-26-unified-video-studio-design.md`의 §5 코드 블록을 `prepare`/`submit`/`poll`에서 `produce(input, onProgress)` 형태로 바꾸고, 워커가 잡 생애를 소유하므로 이 형태가 된다는 한 문장을 덧붙인다.
+
+- [ ] **Step 8: 커밋**
+
+```bash
+git add lib/engines worker docs/superpowers/specs
+git commit -m "feat: add engine interface and pull-based render worker"
+```
+
+---
+
+## Task 10: 초대코드 인증
+
+**Files:**
+- Create: `lib/auth.ts`, `app/api/auth/route.ts`
+- Test: `lib/__tests__/auth.test.ts`
+
+**Interfaces:**
+- Consumes: `fileStore` (Task 5)
+- Produces:
+  - `hashCode(code: string): string`
+  - `verifyInviteCode(code: string): Promise<StudentAccount | null>`
+  - `StudentAccount { id: string; name: string; codeHash: string; monthlyRenderCount: number; createdAt: string }`
+  - `POST /api/auth` — 본문 `{ code }`. 200 시 `student_session` 쿠키 설정
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`lib/__tests__/auth.test.ts`:
+
+```ts
+import { describe, it, expect, beforeEach } from 'vitest';
+import { hashCode, verifyInviteCode } from '../auth';
+import { fileStore } from '../store/file-store';
+
+beforeEach(async () => {
+  await fileStore.write('students', [
+    { id: 'u1', name: '수강생1', codeHash: hashCode('ABC123'), monthlyRenderCount: 0, createdAt: '2026-08-26T00:00:00Z' },
+  ]);
+});
+
+describe('verifyInviteCode', () => {
+  it('accepts a valid code', async () => {
+    expect((await verifyInviteCode('ABC123'))?.id).toBe('u1');
+  });
+
+  it('rejects an unknown code', async () => {
+    expect(await verifyInviteCode('WRONG')).toBeNull();
+  });
+
+  it('is case insensitive', async () => {
+    expect((await verifyInviteCode('abc123'))?.id).toBe('u1');
+  });
+
+  it('rejects an empty code', async () => {
+    expect(await verifyInviteCode('')).toBeNull();
+  });
+});
+
+describe('hashCode', () => {
+  it('never stores the raw code', () => {
+    expect(hashCode('ABC123')).not.toContain('ABC123');
+  });
+});
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+```bash
+npx vitest run lib/__tests__/auth.test.ts
+```
+
+기대: FAIL — 모듈 없음
+
+- [ ] **Step 3: 구현**
+
+`lib/auth.ts`:
+
+```ts
+import { createHash } from 'node:crypto';
+import { fileStore } from './store/file-store';
+
+export interface StudentAccount {
+  id: string; name: string; codeHash: string; monthlyRenderCount: number; createdAt: string;
+}
+
+export function hashCode(code: string): string {
+  return createHash('sha256').update(code.trim().toUpperCase()).digest('hex');
+}
+
+export async function verifyInviteCode(code: string): Promise<StudentAccount | null> {
+  if (!code?.trim()) return null;
+  const students = await fileStore.read<StudentAccount[]>('students', []);
+  const target = hashCode(code);
+  return students.find((s) => s.codeHash === target) ?? null;
+}
+```
+
+`app/api/auth/route.ts`:
+
+```ts
+import { NextResponse } from 'next/server';
+import { verifyInviteCode } from '@/lib/auth';
+
+export const dynamic = 'force-dynamic';
+
+export async function POST(request: Request) {
+  const { code } = (await request.json()) as { code?: string };
+  const student = await verifyInviteCode(code ?? '');
+  if (!student) {
+    return NextResponse.json({ error: '초대코드가 올바르지 않습니다.' }, { status: 401 });
+  }
+  const res = NextResponse.json({ id: student.id, name: student.name });
+  res.cookies.set('student_session', student.id, {
+    httpOnly: true, sameSite: 'lax', secure: true, path: '/', maxAge: 60 * 60 * 24 * 30,
+  });
+  return res;
+}
+```
+
+- [ ] **Step 4: 테스트 통과 확인**
+
+```bash
+npx vitest run lib/__tests__/auth.test.ts
+```
+
+기대: 5개 PASS
+
+- [ ] **Step 5: 커밋**
+
+```bash
+git add lib/auth.ts app/api/auth lib/__tests__/auth.test.ts
+git commit -m "feat: add invite code authentication"
+```
+
+---
+
+## Task 11: 프로젝트 생성 API와 사용량 제한
+
+**Files:**
+- Create: `lib/projects.ts`, `app/api/projects/route.ts`
+- Modify: `app/api/video/generate/route.ts` (HeyGen 분기 제거, 잡 큐로 전환)
+- Test: `lib/__tests__/projects.test.ts`
+
+**Interfaces:**
+- Consumes: `enqueueJob` (Task 5), `StudentAccount` (Task 10)
+- Produces:
+  - `Project { id: string; ownerId: string; engine: 'remotion'; script: string; audioUrl: string|null; subtitles: SubtitleJSON|null; scenes: SceneDirective[]|null; resultUrl: string|null; createdAt: string }`
+  - `createProject(input: { ownerId: string; script: string }): Promise<Project>`
+  - `getProject(id: string): Promise<Project | null>`
+  - `canRender(student: StudentAccount): boolean`
+  - `MONTHLY_RENDER_LIMIT = 30`
+
+- [ ] **Step 1: 실패하는 테스트 작성**
+
+`lib/__tests__/projects.test.ts`:
+
+```ts
+import { describe, it, expect, beforeEach } from 'vitest';
+import { createProject, getProject, canRender, MONTHLY_RENDER_LIMIT } from '../projects';
+import { fileStore } from '../store/file-store';
+import type { StudentAccount } from '../auth';
+
+const student = (count: number): StudentAccount => ({
+  id: 'u1', name: '수강생1', codeHash: 'x', monthlyRenderCount: count, createdAt: '2026-08-26T00:00:00Z',
+});
+
+beforeEach(async () => { await fileStore.write('projects', []); });
+
+describe('createProject', () => {
+  it('stores the script and returns an id', async () => {
+    const p = await createProject({ ownerId: 'u1', script: '무릎 통증 팁' });
+    expect(p.script).toBe('무릎 통증 팁');
+    expect((await getProject(p.id))?.ownerId).toBe('u1');
+  });
+
+  it('starts with no result', async () => {
+    expect((await createProject({ ownerId: 'u1', script: '대본' })).resultUrl).toBeNull();
+  });
+});
+
+describe('canRender', () => {
+  it('allows a student under the limit', () => {
+    expect(canRender(student(0))).toBe(true);
+    expect(canRender(student(MONTHLY_RENDER_LIMIT - 1))).toBe(true);
+  });
+
+  it('blocks a student at the limit', () => {
+    expect(canRender(student(MONTHLY_RENDER_LIMIT))).toBe(false);
+  });
+});
+```
+
+- [ ] **Step 2: 테스트가 실패하는지 확인**
+
+```bash
+npx vitest run lib/__tests__/projects.test.ts
+```
+
+기대: FAIL — 모듈 없음
+
+- [ ] **Step 3: 구현**
+
+`lib/projects.ts`:
+
+```ts
+import { fileStore } from './store/file-store';
+import type { StudentAccount } from './auth';
+import type { SubtitleJSON, SceneDirective } from '@studio/video/src/types';
+
+export const MONTHLY_RENDER_LIMIT = 30;
+
+export interface Project {
+  id: string; ownerId: string; engine: 'remotion'; script: string;
+  audioUrl: string | null; subtitles: SubtitleJSON | null;
+  scenes: SceneDirective[] | null; resultUrl: string | null; createdAt: string;
+}
+
+const KEY = 'projects';
+
+export function canRender(student: StudentAccount): boolean {
+  return student.monthlyRenderCount < MONTHLY_RENDER_LIMIT;
+}
+
+export async function createProject(input: { ownerId: string; script: string }): Promise<Project> {
+  const projects = await fileStore.read<Project[]>(KEY, []);
+  const project: Project = {
+    id: `proj_${crypto.randomUUID().replaceAll('-', '').slice(0, 16)}`,
+    ownerId: input.ownerId, engine: 'remotion', script: input.script,
+    audioUrl: null, subtitles: null, scenes: null, resultUrl: null,
+    createdAt: new Date().toISOString(),
+  };
+  await fileStore.write(KEY, [project, ...projects]);
+  return project;
+}
+
+export async function getProject(id: string): Promise<Project | null> {
+  return (await fileStore.read<Project[]>(KEY, [])).find((p) => p.id === id) ?? null;
+}
+```
+
+`app/api/projects/route.ts`:
+
+```ts
+import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+import { createProject, canRender, MONTHLY_RENDER_LIMIT } from '@/lib/projects';
+import { enqueueJob } from '@/lib/jobs';
+import { fileStore } from '@/lib/store/file-store';
+import type { StudentAccount } from '@/lib/auth';
+
+export const dynamic = 'force-dynamic';
+
+export async function POST(request: Request) {
+  const ownerId = (await cookies()).get('student_session')?.value;
+  if (!ownerId) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
+
+  const students = await fileStore.read<StudentAccount[]>('students', []);
+  const student = students.find((s) => s.id === ownerId);
+  if (!student) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
+
+  if (!canRender(student)) {
+    return NextResponse.json(
+      { error: `이번 달 생성 한도(${MONTHLY_RENDER_LIMIT}편)를 모두 사용했습니다.` },
+      { status: 429 },
+    );
+  }
+
+  const { script } = (await request.json()) as { script?: string };
+  if (!script?.trim()) {
+    return NextResponse.json({ error: '대본을 입력해주세요.' }, { status: 400 });
+  }
+  if (script.length > 1500) {
+    return NextResponse.json({ error: '대본은 최대 1500자까지 입력할 수 있습니다.' }, { status: 400 });
+  }
+
+  const project = await createProject({ ownerId, script });
+  const job = await enqueueJob({ projectId: project.id, ownerId });
+
+  await fileStore.write('students', students.map((s) =>
+    s.id === ownerId ? { ...s, monthlyRenderCount: s.monthlyRenderCount + 1 } : s));
+
+  return NextResponse.json({ projectId: project.id, jobId: job.id, status: 'queued' });
+}
+```
+
+- [ ] **Step 4: HeyGen 라우트 정리**
+
+`app/api/video/generate/route.ts`를 삭제하고, `app/page.tsx`의 호출 대상을 `/api/projects`로 바꾼다. 진행률 폴링은 `/api/jobs/:id`를 쓴다.
+
+```bash
+git rm app/api/video/generate/route.ts app/api/video/status/\[jobId\]/route.ts
+git rm app/api/avatar/create/route.ts app/api/voice/clone/route.ts
+git rm lib/mock-jobs.ts lib/voicebox-client.ts
+git rm -r app/reels
+```
+
+- [ ] **Step 5: 테스트 통과 확인**
+
+```bash
+npx vitest run
+npx tsc --noEmit
+```
+
+기대: 전체 PASS. 타입 에러가 있으면 삭제한 모듈을 참조하는 곳을 고친다.
+
+- [ ] **Step 6: 커밋**
+
+```bash
+git add -A
+git commit -m "feat: add project creation API and remove HeyGen mock routes"
+```
+
+---
+
+## Task 12: 배포와 수강생 접속 확인
+
+**Files:**
+- Create: `lib/store/blob-store.ts`, `lib/store/index.ts`
+- Modify: `.env.example`, `lib/store/file-store.ts` (`kind` 추가), `lib/jobs.ts`·`lib/projects.ts`·`lib/auth.ts` (`store` import로 전환)
+- Test: `lib/__tests__/store-select.test.ts`
+
+**Interfaces:**
+- Consumes: 모든 이전 Task
+- Produces:
+  - `selectStore(): Store & { kind: 'file' | 'blob' }`
+  - `store` — 환경에 따라 선택된 싱글턴
+  - 수강생이 접속 가능한 URL
+
+- [ ] **Step 1: 환경변수 정리**
+
+`.env.example`을 다음으로 교체한다:
+
+```
+# Fish Audio TTS
+FISH_API_KEY=
+FISH_TTS_MODEL=s2.1-pro-free
+FISH_REFERENCE_ID=
+
+# 렌더 워커
+WORKER_TOKEN=
+APP_URL=http://localhost:3000
+WHISPER_MODEL=ggml-base.bin
+
+# 저장소
+STORE_DIR=
+```
+
+- [ ] **Step 2: 로컬 전 구간 통과 확인**
+
+터미널 두 개로:
+
+```bash
+# 터미널 1
+npm run dev
+
+# 터미널 2
+WORKER_RUN=1 WORKER_TOKEN=<토큰> APP_URL=http://localhost:3000 npx tsx worker/index.ts
+```
+
+브라우저에서 초대코드 입력 → 대본 입력 → 생성. 워커 로그에 잡이 잡히고 `.local-data/renders/`에 MP4가 생기는지 확인한다.
+
+- [ ] **Step 3: 초대코드 발급**
+
+`.local-data/students.json`에 수강생 계정을 만든다. 코드는 `hashCode()`로 해시해서 넣는다.
+
+```bash
+node -e "
+const {createHash}=require('crypto');
+const h=c=>createHash('sha256').update(c.trim().toUpperCase()).digest('hex');
+console.log(JSON.stringify([
+  {id:'u1',name:'테스트수강생',codeHash:h('TEST01'),monthlyRenderCount:0,createdAt:new Date().toISOString()}
+],null,2));
+" > .local-data/students.json
+```
+
+- [ ] **Step 4: Blob 저장소 구현 — 이 Task의 실질적인 작업**
+
+**Vercel의 파일시스템은 쓰기가 되지 않는다.** `fileStore`는 로컬에서만 동작하므로 배포용 구현체가 필요하다.
+
+먼저 실패하는 테스트를 쓴다. `lib/__tests__/store-select.test.ts`:
+
+```ts
+import { describe, it, expect, beforeEach } from 'vitest';
+import { selectStore } from '../store';
+
+beforeEach(() => {
+  delete process.env.BLOB_READ_WRITE_TOKEN;
+});
+
+describe('selectStore', () => {
+  it('uses the file store when no blob token is set', () => {
+    expect(selectStore().kind).toBe('file');
+  });
+
+  it('uses the blob store when a token is present', () => {
+    process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_x';
+    expect(selectStore().kind).toBe('blob');
+  });
+});
+```
+
+```bash
+npx vitest run lib/__tests__/store-select.test.ts   # FAIL 확인
+npm install @vercel/blob
+```
+
+`lib/store/blob-store.ts`:
+
+```ts
+import { put, list } from '@vercel/blob';
+import type { Store } from './types';
+
+export const blobStore: Store & { kind: 'blob' } = {
+  kind: 'blob',
+
+  async read<T>(key: string, fallback: T): Promise<T> {
+    try {
+      const { blobs } = await list({ prefix: `${key}.json`, limit: 1 });
+      if (!blobs.length) return fallback;
+      const res = await fetch(blobs[0].url, { cache: 'no-store' });
+      if (!res.ok) return fallback;
+      return (await res.json()) as T;
+    } catch {
+      return fallback;
+    }
+  },
+
+  async write<T>(key: string, value: T): Promise<void> {
+    await put(`${key}.json`, JSON.stringify(value, null, 2), {
+      access: 'public',
+      contentType: 'application/json',
+      addRandomSuffix: false,
+      allowOverwrite: true,
+    });
+  },
+};
+```
+
+`lib/store/index.ts`:
+
+```ts
+import { fileStore } from './file-store';
+import { blobStore } from './blob-store';
+import type { Store } from './types';
+
+export function selectStore(): Store & { kind: 'file' | 'blob' } {
+  return process.env.BLOB_READ_WRITE_TOKEN ? blobStore : fileStore;
+}
+
+export const store = selectStore();
+```
+
+`lib/store/file-store.ts`의 `fileStore`에 `kind: 'file' as const`를 추가한다.
+
+그리고 `lib/jobs.ts`·`lib/projects.ts`·`lib/auth.ts`에서 `fileStore` 직접 import를 `store`로 바꾼다:
+
+```ts
+import { store } from './store';   // 기존: import { fileStore } from './store/file-store';
+```
+
+```bash
+npx vitest run   # 전체 통과 확인
+```
+
+> **알려진 한계 — 동시 쓰기 경합**: 이 저장소는 읽기-수정-쓰기 방식이라 두 요청이 동시에 같은 키를 쓰면 한쪽이 덮인다. 수강생 20명·워커 1대 규모에서는 발생 확률이 낮지만 실재하는 결함이다. 프로젝트 생성이 유실되는 사례가 관측되면 Postgres(Vercel Postgres 또는 Supabase)로 교체한다. `Store` 인터페이스 뒤에 있으므로 교체 범위는 이 파일 하나다.
+
+- [ ] **Step 5: Vercel 배포**
+
+```bash
+npx vercel --prod
+```
+
+Vercel 프로젝트 설정에 등록할 환경변수:
+
+| 변수 | 값 |
+|---|---|
+| `FISH_API_KEY` | Fish Audio 키 |
+| `FISH_REFERENCE_ID` | 클론 보이스 모델 ID |
+| `WORKER_TOKEN` | 워커와 공유할 난수 문자열 |
+| `BLOB_READ_WRITE_TOKEN` | Vercel Blob 연결 시 자동 주입 |
+
+`WORKER_TOKEN`은 다음으로 만든다:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+- [ ] **Step 6: 워커를 배포된 앱에 연결**
+
+```bash
+WORKER_RUN=1 WORKER_TOKEN=<토큰> APP_URL=https://<배포주소> npx tsx worker/index.ts
+```
+
+맥에서 상시 실행되도록 `launchd` 또는 `pm2`로 등록한다.
+
+- [ ] **Step 7: 수강생 1명으로 실제 확인**
+
+배포 주소에 초대코드로 접속해서 릴스 1편을 끝까지 만든다. 실패하면 원인을 기록하고 고친다.
+
+- [ ] **Step 8: 커밋**
+
+```bash
+git add -A
+git commit -m "feat: add deployment configuration and blob store"
+```
+
+---
+
+## 완료 조건
+
+- [ ] 수강생이 초대코드로 접속해 대본을 입력하면 1080×1920 MP4가 생성된다
+- [ ] 자막이 단어 단위로 강조된다
+- [ ] 생성 실패 시 한국어 문구로 원인이 표시된다
+- [ ] 워커를 껐다 켜도 큐에 쌓인 작업이 처리된다
+- [ ] 월 생성 한도 초과 시 안내가 나온다
+- [ ] `npx vitest run`과 `npx tsc --noEmit`이 통과한다
+
+## 계획 2로 미루는 것
+
+씬 5종 추가(`content_slide`·`emphasis`·`list_reveal`·`quote`·`conclusion`) · LLM 씬 지시서 생성 · Rive 캐릭터 리깅과 연동 · `learning-store` 표본 문턱 · 캐릭터 PNG 폴백 컴포넌트

@@ -10,3 +10,4 @@ chromex/
 .local-data/
 public/generated-audio/
 .DS_Store
+public/renders/

@@ -1,30 +1,49 @@
 import { describe, it, expect, vi } from 'vitest';
-import { pollOnce } from '../index';
+import { pollOnce, missingWorkerEnv, artifactKeyFor, REQUIRED_WORKER_ENV } from '../index';
 
 const job = { id: 'job1', projectId: 'p1', engine: 'remotion' as const };
 const project = { id: 'p1', ownerId: 'u1', script: '무릎 통증 팁' };
+const publish = async () => 'https://cdn.example/renders/job1.mp4';
 
 describe('pollOnce', () => {
   it('does nothing when the queue is empty', async () => {
     const produce = vi.fn();
     const result = await pollOnce({
-      claim: async () => ({ job: null, project: null }), produce, report: vi.fn(),
+      claim: async () => ({ job: null, project: null }), produce, publish, report: vi.fn(),
     });
     expect(result).toBe('idle');
     expect(produce).not.toHaveBeenCalled();
   });
 
-  it('produces a reel and reports completion', async () => {
+  // 워커 디스크 경로를 그대로 보고하면 브라우저가 열 수 없다. 업로드가 돌려준 URL이어야 한다.
+  it('reports the published url, not the local render path', async () => {
     const report = vi.fn();
+    const published = vi.fn(async () => '/renders/job1.mp4');
     const result = await pollOnce({
       claim: async () => ({ job, project }),
-      produce: async () => ({ outputPath: '/out/job1.mp4', durationSec: 12 }),
+      produce: async () => ({ outputPath: '/tmp/.local-data/renders/job1.mp4', durationSec: 12 }),
+      publish: published,
       report,
     });
     expect(result).toBe('rendered');
-    expect(report).toHaveBeenCalledWith('job1', {
-      status: 'completed', progress: 100, resultUrl: '/out/job1.mp4',
+    expect(published).toHaveBeenCalledWith(job, {
+      outputPath: '/tmp/.local-data/renders/job1.mp4', durationSec: 12,
     });
+    expect(report).toHaveBeenCalledWith('job1', {
+      status: 'completed', progress: 100, resultUrl: '/renders/job1.mp4',
+    });
+  });
+
+  it('fails the job when the upload fails instead of reporting a local path', async () => {
+    const report = vi.fn();
+    const result = await pollOnce({
+      claim: async () => ({ job, project }),
+      produce: async () => ({ outputPath: '/tmp/job1.mp4', durationSec: 12 }),
+      publish: async () => { throw new Error('업로드 실패'); },
+      report,
+    });
+    expect(result).toBe('failed');
+    expect(report).toHaveBeenCalledWith('job1', { status: 'failed', error: '업로드 실패' });
   });
 
   it('reports failure instead of throwing', async () => {
@@ -32,6 +51,7 @@ describe('pollOnce', () => {
     const result = await pollOnce({
       claim: async () => ({ job, project }),
       produce: async () => { throw new Error('렌더 실패'); },
+      publish,
       report,
     });
     expect(result).toBe('failed');
@@ -41,7 +61,7 @@ describe('pollOnce', () => {
   it('fails the job when the project is missing', async () => {
     const report = vi.fn();
     const result = await pollOnce({
-      claim: async () => ({ job, project: null }), produce: vi.fn(), report,
+      claim: async () => ({ job, project: null }), produce: vi.fn(), publish, report,
     });
     expect(result).toBe('failed');
     expect(report).toHaveBeenCalledWith('job1', {
@@ -76,5 +96,36 @@ describe('pollOnce', () => {
     process.off('unhandledRejection', onUnhandled);
     expect(unhandled).toBeNull();
     expect(calls).toEqual([['job1', { status: 'rendering', progress: 50 }]]);
+  });
+});
+
+describe('missingWorkerEnv', () => {
+  const full = {
+    WORKER_TOKEN: 't', APP_URL: 'http://localhost:3000', FISH_REFERENCE_ID: 'v',
+    FISH_API_KEY: 'k', WHISPER_MODEL: '/models/ggml-base.bin',
+  };
+
+  it('passes when every required variable is set', () => {
+    expect(missingWorkerEnv(full)).toEqual([]);
+  });
+
+  it('names every missing variable at once, not just the first', () => {
+    expect(missingWorkerEnv({ APP_URL: 'http://localhost:3000' }))
+      .toEqual(['WORKER_TOKEN', 'FISH_REFERENCE_ID', 'FISH_API_KEY', 'WHISPER_MODEL']);
+  });
+
+  it('treats a blank value as missing', () => {
+    expect(missingWorkerEnv({ ...full, FISH_API_KEY: '   ' })).toEqual(['FISH_API_KEY']);
+  });
+
+  it('requires the whole pipeline, not just the worker half', () => {
+    expect([...REQUIRED_WORKER_ENV]).toContain('WHISPER_MODEL');
+    expect([...REQUIRED_WORKER_ENV]).toContain('FISH_API_KEY');
+  });
+});
+
+describe('artifactKeyFor', () => {
+  it('scopes renders under a single prefix so both stores agree on the path', () => {
+    expect(artifactKeyFor('job_abc')).toBe('renders/job_abc.mp4');
   });
 });

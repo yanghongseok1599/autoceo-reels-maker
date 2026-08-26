@@ -1,4 +1,5 @@
 import { synthesizeFishSpeech } from '@/lib/fish-audio-client';
+import { appPublicDir } from '@/lib/paths';
 import path from 'node:path';
 
 /**
@@ -8,12 +9,15 @@ import path from 'node:path';
  */
 export async function synthesizeNarration(input: {
   text: string; referenceId: string; speakingSpeed?: number; instruct?: string;
-}): Promise<{ audioPath: string }> {
+}): Promise<{ audioPath: string; publicPath: string }> {
   const result = await synthesizeFishSpeech(input);
   if (result.status === 'error' || !result.audioUrl) {
     throw new Error(result.error ?? '음성 합성에 실패했습니다.');
   }
   return {
-    audioPath: path.join(process.cwd(), 'public', result.audioUrl),
+    /** whisper.cpp에 넘길 디스크 경로 */
+    audioPath: path.join(appPublicDir(), result.audioUrl),
+    /** Remotion public 루트 기준 경로. `<Audio src>`가 실제로 로드되는 유일한 형태다. */
+    publicPath: result.audioUrl.replace(/^\//, ''),
   };
 }

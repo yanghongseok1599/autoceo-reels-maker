@@ -524,6 +524,13 @@ export default function Home() {
     const timer = window.setInterval(async () => {
       const elapsed = Date.now() - startedAt;
       const response = await fetch(`/api/jobs/${nextJobId}`);
+
+      if (response.status === 401) {
+        window.clearInterval(timer);
+        window.location.href = "/login";
+        return;
+      }
+
       const data = await response.json();
 
       if (!response.ok) {
@@ -537,10 +544,16 @@ export default function Home() {
 
       if (data.status === "completed") {
         window.clearInterval(timer);
+        setProgress(100);
+        // 완료라고 하면서 주소가 없으면 보여줄 게 없다. 성공인 척하지 않는다.
+        if (!data.resultUrl) {
+          setVideoStatus("failed");
+          setMessage("영상은 만들어졌지만 주소를 받지 못했습니다. 운영자에게 문의해주세요.");
+          return;
+        }
         setVideoStatus("completed");
         setResultUrl(data.resultUrl);
         setLearningRecordId(data.learningRecordId ?? learningRecordId);
-        setProgress(100);
         loadLearningInsights(selectedFormat);
       }
 
@@ -1250,7 +1263,7 @@ export default function Home() {
                 </p>
               </div>
 
-              <div className={`stepCard output ${activeStepCard === 2 ? "activeStep" : ""} ${!isExerciseMode && videoStatus === "completed" && (resultAudioUrl || resultUrl.startsWith("http")) ? "fullPreview" : ""}`}>
+              <div className={`stepCard output ${activeStepCard === 2 ? "activeStep" : ""} ${!isExerciseMode && videoStatus === "completed" && resultUrl ? "fullPreview" : ""}`}>
                 {activeStepCard === 2 && videoStatus !== "completed" && (
                   <span className="nextStepBadge">다음 단계</span>
                 )}
@@ -1267,7 +1280,7 @@ export default function Home() {
                         <strong>덤벨컬 동작 가이드</strong>
                       </div>
                     </div>
-                  ) : videoStatus === "completed" && resultUrl.startsWith("http") ? (
+                  ) : videoStatus === "completed" && resultUrl ? (
                     <div className="outputReelPreview">
                       <video
                         className="outputVideoPreview"
@@ -1276,27 +1289,24 @@ export default function Home() {
                         playsInline
                       />
                     </div>
-                  ) : videoStatus === "completed" && resultAudioUrl ? (
-                    <div className="outputReelPreview">
-                      <img
-                        className="outputExamplePhoto"
-                        src={avatar.previewUrl || "/images/pilates-talking-avatar.png"}
-                        alt="완성된 아바타 릴스 미리듣기"
-                      />
-                      <div className="outputCaption">
-                        <span>▶ 미리듣기</span>
-                        <audio className="outputAudioPlayer" src={resultAudioUrl} controls />
-                      </div>
+                  ) : videoStatus === "completed" || videoStatus === "failed" ? (
+                    /*
+                     * 결과 URL이 없는데도 예시 사진을 "완성"이라고 붙여 내보내면
+                     * 수강생은 남의 스톡 사진을 자기 결과물로 받는다. 오류가 낫다.
+                     */
+                    <div className="outputReelPreview outputErrorState">
+                      <strong>영상을 만들지 못했습니다</strong>
+                      <p>{message || "완성된 영상 주소를 받지 못했습니다. 다시 시도해주세요."}</p>
                     </div>
                   ) : (
                     <div className="outputReelPreview">
                       <img
                         className="outputExamplePhoto"
                         src="/images/pilates-talking-avatar.png"
-                        alt="완성된 아바타 릴스 예시"
+                        alt="완성된 아바타 릴스 예시 이미지"
                       />
                       <div className="outputCaption">
-                        <span>아바타 릴스 완성</span>
+                        <span>완성 예시</span>
                         <strong>오늘의 필라테스 팁</strong>
                       </div>
                     </div>

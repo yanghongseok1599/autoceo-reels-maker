@@ -1853,6 +1853,36 @@ button {
   margin-top: 8px;
 }
 
+/* 결과 URL 없이 완료/실패로 끝났을 때. 예시 사진 대신 이유를 말한다. */
+.outputErrorState {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+  padding: 20px 16px;
+  border: 1px solid rgba(255, 122, 122, 0.45);
+  background: #1a1012;
+  text-align: center;
+}
+
+.outputErrorState strong {
+  color: #ff9d9d;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 820;
+  line-height: 1.2;
+}
+
+.outputErrorState p {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.stepCard.output.fullPreview .outputErrorState {
+  min-height: 160px;
+}
+
 .stepCard.output.fullPreview .outputFrame {
   flex: none;
   height: auto;

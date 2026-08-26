@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { access } from "node:fs/promises";
 import path from "node:path";
 import { env } from "@/lib/env";
+import { appPublicDir } from "@/lib/paths";
 import { listFishVoices, upsertFishVoice, type FishVoiceProfile } from "@/lib/fish-voice-store";
 
 type FishModelEntity = {
@@ -20,7 +21,10 @@ type FishSpeechResult = {
   error?: string;
 };
 
-const generatedAudioDir = path.join(process.cwd(), "public", "generated-audio");
+/** 호출 시점에 정한다 — 모듈 로드 시점에 고정하면 테스트가 PUBLIC_DIR로 갈아끼울 수 없다. */
+function generatedAudioDir() {
+  return path.join(appPublicDir(), "generated-audio");
+}
 
 function requireFishApiKey() {
   if (!env.fishApiKey) {
@@ -157,8 +161,8 @@ export async function synthesizeFishSpeech(input: {
 
     const generationId = crypto.randomUUID();
     const audio = Buffer.from(await response.arrayBuffer());
-    await mkdir(generatedAudioDir, { recursive: true });
-    await writeFile(path.join(generatedAudioDir, `${generationId}.mp3`), audio);
+    await mkdir(generatedAudioDir(), { recursive: true });
+    await writeFile(path.join(generatedAudioDir(), `${generationId}.mp3`), audio);
 
     return {
       generationId,
@@ -176,7 +180,7 @@ export async function synthesizeFishSpeech(input: {
 
 export async function getFishSpeechStatus(id: string) {
   try {
-    await access(path.join(generatedAudioDir, `${id}.mp3`));
+    await access(path.join(generatedAudioDir(), `${id}.mp3`));
     return {
       status: "completed",
       audioUrl: `/generated-audio/${id}.mp3`,

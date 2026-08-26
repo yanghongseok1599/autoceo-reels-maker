@@ -24,6 +24,10 @@ export interface Palette {
 
 export interface ReelProps {
   subtitles: SubtitleJSON;
+  /**
+   * 절대 http(s) URL이거나, Remotion public 루트 기준 상대 경로(예: `generated-audio/ab.mp3`).
+   * 절대 파일시스템 경로는 렌더러가 받지 못한다 — `utils/audioSrc.ts` 참고.
+   */
   audioUrl: string | null;
   scenes: SceneDirective[];
   durationInSeconds: number;

@@ -809,17 +809,22 @@ git commit -m "feat: add word-level subtitles and voice energy analysis"
 
 ---
 
-## Task 5: 잡 저장소 (인메모리 Map 대체)
+## Task 5: 저장소 계층 — store · jobs · projects
 
 `lib/mock-jobs.ts`의 인메모리 `Map`은 서버 재시작 시 사라지고, 서버리스에서는 요청마다 인스턴스가 달라 아예 동작하지 않는다. 배포가 목표이므로 반드시 교체한다.
 
 **Files:**
-- Create: `lib/store/types.ts`, `lib/store/file-store.ts`, `lib/jobs.ts`
-- Test: `lib/__tests__/jobs.test.ts`
+- Create: `lib/store/types.ts`, `lib/store/file-store.ts`, `lib/store/index.ts`, `lib/jobs.ts`, `lib/projects.ts`
+- Test: `lib/__tests__/jobs.test.ts`, `lib/__tests__/projects.test.ts`
 
 **Interfaces:**
 - Consumes: 없음
 - Produces:
+  - `Store { read<T>(key, fallback): Promise<T>; write<T>(key, value): Promise<void> }`
+  - `store` — **모든 프로덕션 코드가 쓰는 단일 진입점.** `fileStore`를 직접 import하지 않는다 (Global Constraints). 테스트는 시드·초기화 목적으로 `fileStore`를 직접 써도 된다
+  - `Project { id: string; ownerId: string; engine: 'remotion'; script: string; audioUrl: string|null; subtitles: SubtitleJSON|null; scenes: SceneDirective[]|null; resultUrl: string|null; createdAt: string }`
+  - `createProject(input: { ownerId: string; script: string }): Promise<Project>`
+  - `getProject(id: string): Promise<Project | null>`
   - `RenderJob { id: string; projectId: string; ownerId: string; engine: 'remotion'; status: 'queued'|'claimed'|'rendering'|'completed'|'failed'; progress: number; claimedAt: string|null; resultUrl: string|null; error: string|null; createdAt: string }`
   - `enqueueJob(input: { projectId: string; ownerId: string }): Promise<RenderJob>`
   - `claimNextJob(now?: Date): Promise<RenderJob | null>`
@@ -925,7 +930,74 @@ export const fileStore: Store = {
 
 export async function resetStoreForTests(): Promise<void> {
   await fileStore.write('jobs', []);
+  await fileStore.write('projects', []);
 }
+```
+
+`lib/store/index.ts` — 프로덕션 코드는 항상 이 진입점을 쓴다. Task 12에서 배포용 Blob 구현체가 붙을 때 이 파일만 바뀐다:
+
+```ts
+import { fileStore } from './file-store';
+import type { Store } from './types';
+
+export const store: Store = fileStore;
+```
+
+`lib/projects.ts`:
+
+```ts
+import { store } from './store';
+import type { SubtitleJSON, SceneDirective } from '@studio/video/src/types';
+
+export interface Project {
+  id: string; ownerId: string; engine: 'remotion'; script: string;
+  audioUrl: string | null; subtitles: SubtitleJSON | null;
+  scenes: SceneDirective[] | null; resultUrl: string | null; createdAt: string;
+}
+
+const KEY = 'projects';
+
+export async function createProject(input: { ownerId: string; script: string }): Promise<Project> {
+  const projects = await store.read<Project[]>(KEY, []);
+  const project: Project = {
+    id: `proj_${crypto.randomUUID().replaceAll('-', '').slice(0, 16)}`,
+    ownerId: input.ownerId, engine: 'remotion', script: input.script,
+    audioUrl: null, subtitles: null, scenes: null, resultUrl: null,
+    createdAt: new Date().toISOString(),
+  };
+  await store.write(KEY, [project, ...projects]);
+  return project;
+}
+
+export async function getProject(id: string): Promise<Project | null> {
+  return (await store.read<Project[]>(KEY, [])).find((p) => p.id === id) ?? null;
+}
+```
+
+`lib/__tests__/projects.test.ts`:
+
+```ts
+import { describe, it, expect, beforeEach } from 'vitest';
+import { createProject, getProject } from '../projects';
+import { resetStoreForTests } from '../store/file-store';
+
+beforeEach(async () => { await resetStoreForTests(); });
+
+describe('createProject', () => {
+  it('stores the script and returns an id', async () => {
+    const p = await createProject({ ownerId: 'u1', script: '무릎 통증 팁' });
+    expect(p.script).toBe('무릎 통증 팁');
+    expect((await getProject(p.id))?.ownerId).toBe('u1');
+  });
+
+  it('starts with no result', async () => {
+    expect((await createProject({ ownerId: 'u1', script: '대본' })).resultUrl).toBeNull();
+  });
+
+  it('returns null for an unknown id', async () => {
+    expect(await getProject('nope')).toBeNull();
+  });
+});
 ```
 
 - [ ] **Step 4: 큐 로직 구현**
@@ -933,7 +1005,7 @@ export async function resetStoreForTests(): Promise<void> {
 `lib/jobs.ts`:
 
 ```ts
-import { fileStore } from './store/file-store';
+import { store } from './store';
 
 export const STALE_CLAIM_MS = 15 * 60 * 1000;
 
@@ -951,8 +1023,8 @@ export interface RenderJob {
 }
 
 const KEY = 'jobs';
-const read = () => fileStore.read<RenderJob[]>(KEY, []);
-const write = (jobs: RenderJob[]) => fileStore.write(KEY, jobs);
+const read = () => store.read<RenderJob[]>(KEY, []);
+const write = (jobs: RenderJob[]) => store.write(KEY, jobs);
 
 export async function enqueueJob(input: { projectId: string; ownerId: string }): Promise<RenderJob> {
   const jobs = await read();
@@ -1009,16 +1081,16 @@ export async function getJob(id: string): Promise<RenderJob | null> {
 - [ ] **Step 5: 테스트 통과 확인**
 
 ```bash
-npx vitest run lib/__tests__/jobs.test.ts
+npx vitest run lib/__tests__/jobs.test.ts lib/__tests__/projects.test.ts
 ```
 
-기대: 5개 PASS
+기대: 잡 5개 + 프로젝트 3개 = 8개 PASS
 
 - [ ] **Step 6: 커밋**
 
 ```bash
-git add lib/store lib/jobs.ts lib/__tests__
-git commit -m "feat: replace in-memory job map with persistent job queue"
+git add lib/store lib/jobs.ts lib/projects.ts lib/__tests__
+git commit -m "feat: add persistent store layer with job queue and projects"
 ```
 
 ---
@@ -1030,9 +1102,7 @@ git commit -m "feat: replace in-memory job map with persistent job queue"
 - Test: `app/api/__tests__/jobs-route.test.ts`
 
 **Interfaces:**
-- Consumes: `claimNextJob`, `updateJob`, `getJob` (Task 5), `getProject`/`createProject` (Task 11)
-
-> **순서 주의**: 이 Task는 `lib/projects.ts`를 사용한다. Task 11을 먼저 하거나, Task 11의 Step 3에 있는 `lib/projects.ts`만 앞당겨 만든 뒤 진행한다.
+- Consumes: `claimNextJob`, `updateJob`, `getJob`, `getProject`, `createProject` (모두 Task 5)
 - Produces:
   - `POST /api/jobs/next` — 헤더 `x-worker-token`. 200 `{ job: RenderJob | null, project: Project | null }`, 401 미인증. **워커가 파이프라인을 돌리려면 대본이 필요하므로 프로젝트를 함께 넘긴다**
   - `PATCH /api/jobs/:id` — 헤더 `x-worker-token`. 본문 `{ status?, progress?, resultUrl?, error? }`
@@ -1972,7 +2042,7 @@ git commit -m "feat: add engine interface and pull-based render worker"
 - Test: `lib/__tests__/auth.test.ts`
 
 **Interfaces:**
-- Consumes: `fileStore` (Task 5)
+- Consumes: `store` (Task 5)
 - Produces:
   - `hashCode(code: string): string`
   - `verifyInviteCode(code: string): Promise<StudentAccount | null>`
@@ -2033,7 +2103,7 @@ npx vitest run lib/__tests__/auth.test.ts
 
 ```ts
 import { createHash } from 'node:crypto';
-import { fileStore } from './store/file-store';
+import { store } from './store';
 
 export interface StudentAccount {
   id: string; name: string; codeHash: string; monthlyRenderCount: number; createdAt: string;
@@ -2045,7 +2115,7 @@ export function hashCode(code: string): string {
 
 export async function verifyInviteCode(code: string): Promise<StudentAccount | null> {
   if (!code?.trim()) return null;
-  const students = await fileStore.read<StudentAccount[]>('students', []);
+  const students = await store.read<StudentAccount[]>('students', []);
   const target = hashCode(code);
   return students.find((s) => s.codeHash === target) ?? null;
 }
@@ -2093,45 +2163,29 @@ git commit -m "feat: add invite code authentication"
 ## Task 11: 프로젝트 생성 API와 사용량 제한
 
 **Files:**
-- Create: `lib/projects.ts`, `app/api/projects/route.ts`
-- Modify: `app/api/video/generate/route.ts` (HeyGen 분기 제거, 잡 큐로 전환)
-- Test: `lib/__tests__/projects.test.ts`
+- Create: `app/api/projects/route.ts`
+- Modify: `lib/projects.ts` (사용량 제한 추가), `app/api/video/generate/route.ts` (삭제), `app/page.tsx` (새 API 연결)
+- Test: `lib/__tests__/usage-limit.test.ts`
 
 **Interfaces:**
-- Consumes: `enqueueJob` (Task 5), `StudentAccount` (Task 10)
+- Consumes: `createProject` (Task 5), `enqueueJob` (Task 5), `StudentAccount` (Task 10)
 - Produces:
-  - `Project { id: string; ownerId: string; engine: 'remotion'; script: string; audioUrl: string|null; subtitles: SubtitleJSON|null; scenes: SceneDirective[]|null; resultUrl: string|null; createdAt: string }`
-  - `createProject(input: { ownerId: string; script: string }): Promise<Project>`
-  - `getProject(id: string): Promise<Project | null>`
   - `canRender(student: StudentAccount): boolean`
   - `MONTHLY_RENDER_LIMIT = 30`
+  - `POST /api/projects` — 쿠키 `student_session` 필요. 200 `{ projectId, jobId, status: 'queued' }`, 401 미인증, 429 한도초과, 400 대본 문제
 
 - [ ] **Step 1: 실패하는 테스트 작성**
 
-`lib/__tests__/projects.test.ts`:
+`lib/__tests__/usage-limit.test.ts`:
 
 ```ts
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createProject, getProject, canRender, MONTHLY_RENDER_LIMIT } from '../projects';
-import { fileStore } from '../store/file-store';
+import { describe, it, expect } from 'vitest';
+import { canRender, MONTHLY_RENDER_LIMIT } from '../projects';
 import type { StudentAccount } from '../auth';
 
 const student = (count: number): StudentAccount => ({
-  id: 'u1', name: '수강생1', codeHash: 'x', monthlyRenderCount: count, createdAt: '2026-08-26T00:00:00Z',
-});
-
-beforeEach(async () => { await fileStore.write('projects', []); });
-
-describe('createProject', () => {
-  it('stores the script and returns an id', async () => {
-    const p = await createProject({ ownerId: 'u1', script: '무릎 통증 팁' });
-    expect(p.script).toBe('무릎 통증 팁');
-    expect((await getProject(p.id))?.ownerId).toBe('u1');
-  });
-
-  it('starts with no result', async () => {
-    expect((await createProject({ ownerId: 'u1', script: '대본' })).resultUrl).toBeNull();
-  });
+  id: 'u1', name: '수강생1', codeHash: 'x',
+  monthlyRenderCount: count, createdAt: '2026-08-26T00:00:00Z',
 });
 
 describe('canRender', () => {
@@ -2143,54 +2197,32 @@ describe('canRender', () => {
   it('blocks a student at the limit', () => {
     expect(canRender(student(MONTHLY_RENDER_LIMIT))).toBe(false);
   });
+
+  it('blocks a student past the limit', () => {
+    expect(canRender(student(MONTHLY_RENDER_LIMIT + 5))).toBe(false);
+  });
 });
 ```
 
 - [ ] **Step 2: 테스트가 실패하는지 확인**
 
 ```bash
-npx vitest run lib/__tests__/projects.test.ts
+npx vitest run lib/__tests__/usage-limit.test.ts
 ```
 
-기대: FAIL — 모듈 없음
+기대: FAIL — `canRender`가 없음
 
 - [ ] **Step 3: 구현**
 
-`lib/projects.ts`:
+`lib/projects.ts`에 **추가**한다 (파일 자체는 Task 5에서 생성됨):
 
 ```ts
-import { fileStore } from './store/file-store';
 import type { StudentAccount } from './auth';
-import type { SubtitleJSON, SceneDirective } from '@studio/video/src/types';
 
 export const MONTHLY_RENDER_LIMIT = 30;
 
-export interface Project {
-  id: string; ownerId: string; engine: 'remotion'; script: string;
-  audioUrl: string | null; subtitles: SubtitleJSON | null;
-  scenes: SceneDirective[] | null; resultUrl: string | null; createdAt: string;
-}
-
-const KEY = 'projects';
-
 export function canRender(student: StudentAccount): boolean {
   return student.monthlyRenderCount < MONTHLY_RENDER_LIMIT;
-}
-
-export async function createProject(input: { ownerId: string; script: string }): Promise<Project> {
-  const projects = await fileStore.read<Project[]>(KEY, []);
-  const project: Project = {
-    id: `proj_${crypto.randomUUID().replaceAll('-', '').slice(0, 16)}`,
-    ownerId: input.ownerId, engine: 'remotion', script: input.script,
-    audioUrl: null, subtitles: null, scenes: null, resultUrl: null,
-    createdAt: new Date().toISOString(),
-  };
-  await fileStore.write(KEY, [project, ...projects]);
-  return project;
-}
-
-export async function getProject(id: string): Promise<Project | null> {
-  return (await fileStore.read<Project[]>(KEY, [])).find((p) => p.id === id) ?? null;
 }
 ```
 
@@ -2201,7 +2233,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createProject, canRender, MONTHLY_RENDER_LIMIT } from '@/lib/projects';
 import { enqueueJob } from '@/lib/jobs';
-import { fileStore } from '@/lib/store/file-store';
+import { store } from '@/lib/store';
 import type { StudentAccount } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
@@ -2210,7 +2242,7 @@ export async function POST(request: Request) {
   const ownerId = (await cookies()).get('student_session')?.value;
   if (!ownerId) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
 
-  const students = await fileStore.read<StudentAccount[]>('students', []);
+  const students = await store.read<StudentAccount[]>('students', []);
   const student = students.find((s) => s.id === ownerId);
   if (!student) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
 
@@ -2232,7 +2264,7 @@ export async function POST(request: Request) {
   const project = await createProject({ ownerId, script });
   const job = await enqueueJob({ projectId: project.id, ownerId });
 
-  await fileStore.write('students', students.map((s) =>
+  await store.write('students', students.map((s) =>
     s.id === ownerId ? { ...s, monthlyRenderCount: s.monthlyRenderCount + 1 } : s));
 
   return NextResponse.json({ projectId: project.id, jobId: job.id, status: 'queued' });
@@ -2263,7 +2295,7 @@ npx tsc --noEmit
 
 ```bash
 git add -A
-git commit -m "feat: add project creation API and remove HeyGen mock routes"
+git commit -m "feat: add project API with usage limit and remove HeyGen mock routes"
 ```
 
 ---
@@ -2271,8 +2303,8 @@ git commit -m "feat: add project creation API and remove HeyGen mock routes"
 ## Task 12: 배포와 수강생 접속 확인
 
 **Files:**
-- Create: `lib/store/blob-store.ts`, `lib/store/index.ts`
-- Modify: `.env.example`, `lib/store/file-store.ts` (`kind` 추가), `lib/jobs.ts`·`lib/projects.ts`·`lib/auth.ts` (`store` import로 전환)
+- Create: `lib/store/blob-store.ts`
+- Modify: `lib/store/index.ts` (구현체 선택 추가), `.env.example`, `lib/store/file-store.ts` (`kind` 추가)
 - Test: `lib/__tests__/store-select.test.ts`
 
 **Interfaces:**
@@ -2392,7 +2424,7 @@ export const blobStore: Store & { kind: 'blob' } = {
 };
 ```
 
-`lib/store/index.ts`:
+`lib/store/index.ts`를 **교체**한다 (Task 5에서 만든 단순 버전을 구현체 선택으로 확장):
 
 ```ts
 import { fileStore } from './file-store';
@@ -2408,11 +2440,7 @@ export const store = selectStore();
 
 `lib/store/file-store.ts`의 `fileStore`에 `kind: 'file' as const`를 추가한다.
 
-그리고 `lib/jobs.ts`·`lib/projects.ts`·`lib/auth.ts`에서 `fileStore` 직접 import를 `store`로 바꾼다:
-
-```ts
-import { store } from './store';   // 기존: import { fileStore } from './store/file-store';
-```
+소비 코드는 이미 전부 `store`를 쓰고 있으므로 **더 고칠 곳이 없다** (Task 5의 Global Constraints 준수 덕분).
 
 ```bash
 npx vitest run   # 전체 통과 확인

@@ -2,7 +2,7 @@ import React from 'react';
 import { Composition } from 'remotion';
 import { ReelVertical } from './ReelVertical';
 import type { ReelProps } from './types';
-import { FALLBACK_ACCENT } from './types';
+import { FALLBACK_PALETTE } from './types';
 
 export const REEL_WIDTH = 1080;
 export const REEL_HEIGHT = 1920;
@@ -28,7 +28,7 @@ export const RemotionRoot: React.FC = () => (
       audioUrl: null,
       scenes: [],
       durationInSeconds: 5,
-      accentColor: FALLBACK_ACCENT,
+      palette: FALLBACK_PALETTE,
     } satisfies ReelProps}
   />
 );

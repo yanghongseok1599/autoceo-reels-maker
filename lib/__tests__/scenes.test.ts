@@ -288,6 +288,17 @@ describe('buildScenes — 본문 슬라이드', () => {
     expect(scene.bullets).toEqual(['무릎을 천천히 굽혀 주세요']);
   });
 
+  it('keeps every word of a long first clause, comma or no comma', () => {
+    // content_slide가 받는 문장은 쉼표가 많아야 하나다 — 둘 이상이면 list_reveal로 간다.
+    // 그래서 "첫 절이 긴" 문장이 이 씬 타입의 보통 모양이고, 여기서 잘라 버리면 릴스마다
+    // 문장 끝이 조용히 사라진다. 쉼표 갈래도 쉼표 없는 갈래와 같은 규칙이어야 한다.
+    const line = '천천히 숨을 내쉬면서 무릎이 발끝을 넘지 않도록 아주 조금씩 버티며 내려가세요, 그리고 다시 올라옵니다';
+    const scene = asContent(buildScenes({ subtitles: subs('제목', line, '끝'), script: '대본', sheet })[1]);
+    expect(scene.heading.length).toBeLessThanOrEqual(40);
+    expect([scene.heading, ...scene.bullets].join(' ').split(/\s+/).filter(Boolean))
+      .toEqual(line.split(/[\s,]+/).filter(Boolean));
+  });
+
   it('moves the tail of a long sentence into a bullet instead of dropping it', () => {
     const line = '천천히 숨을 내쉬면서 무릎이 발끝을 넘지 않도록 주의하며 아주 조금씩 내려가세요';
     const scene = asContent(buildScenes({ subtitles: subs('제목', line, '끝'), script: '대본', sheet })[1]);

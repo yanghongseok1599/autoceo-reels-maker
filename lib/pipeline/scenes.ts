@@ -52,21 +52,29 @@ function splitList(text: string): { title: string; items: string[] } {
   };
 }
 
+/** MAX_TITLE을 넘으면 어절 경계에서 한 번 자른다. 꼬리는 버리지 않고 그대로 돌려준다 */
+function cutAtWord(text: string): { head: string; tail: string } {
+  if (text.length <= MAX_TITLE) return { head: text, tail: '' };
+  const space = text.lastIndexOf(' ', MAX_TITLE);
+  const cut = space > 0 ? space : MAX_TITLE;
+  return { head: text.slice(0, cut).trim(), tail: text.slice(cut).trim() };
+}
+
 /**
- * 본문 한 문장을 제목(첫 절)과 불릿(나머지)으로 가른다. ContentSlide는 heading을 언제나
- * 그리므로 빈 제목을 넘기지 않는다. 쉼표가 있으면 첫 절이 제목이 되고, 쉼표가 없는 긴
- * 문장은 어절 경계에서 앞머리만 떼어 제목으로 쓰고 꼬리를 불릿에 담는다 — 버리지 않는다.
+ * 본문 한 문장을 제목(첫 절)과 불릿(나머지 절)으로 가른다. ContentSlide는 heading을 언제나
+ * 그리므로 빈 제목을 넘기지 않는다.
+ *
+ * 제목이 길면 `truncate`로 잘라 버리면 안 된다. content_slide가 받는 문장은 쉼표가 많아야
+ * 하나다(둘 이상이면 list_reveal로 간다) — 그래서 "첫 절이 긴" 문장이 이 씬 타입의 예외가
+ * 아니라 **보통 모양**이다. 잘라 버리면 릴스마다 문장 끝이 조용히 사라지는데, 화면만 봐서는
+ * 아무 이상이 없어 보인다. 그래서 절이 하나든 둘이든 규칙은 하나다: 넘치는 꼬리는
+ * 잘라 버리지 않고 불릿 맨 앞으로 밀어 넣는다.
  */
 function splitLead(text: string): { lead: string; body: string[] } {
   const clauses = text.split(',').map((clause) => clause.trim()).filter(Boolean);
-  if (clauses.length > 1) return { lead: truncate(clauses[0]), body: clauses.slice(1) };
-
-  const one = clauses[0] ?? text;
-  if (one.length <= MAX_TITLE) return { lead: one, body: [] };
-
-  const space = one.lastIndexOf(' ', MAX_TITLE);
-  const cut = space > 0 ? space : MAX_TITLE;
-  return { lead: one.slice(0, cut).trim(), body: [one.slice(cut).trim()] };
+  const { head, tail } = cutAtWord(clauses[0] ?? text);
+  const rest = clauses.slice(1);
+  return { lead: head, body: tail ? [tail, ...rest] : rest };
 }
 
 /**

@@ -129,15 +129,16 @@ git commit -m "docs: record R-1 remotion render verification result"
 **React 19 확인 지점:** `Reels maker`는 React 19, `youtube-voice-long-main`은 React 18이다. Remotion 4가 React 19에서 동작하는지 이 Task에서 확인된다. 설치나 렌더가 React 버전 때문에 실패하면 즉시 보고한다.
 
 **Files:**
-- Modify: `package.json`
+- Modify: `package.json`, `next.config.mjs` (`transpilePackages` 추가 — 이게 없으면 후속 Task가 `@studio/video/src/types`를 서버 코드에서 import할 때 빌드가 깨진다)
 - Create: `vitest.config.ts`, `packages/video/package.json`, `packages/video/src/types.ts`, `packages/video/src/Root.tsx`, `packages/video/src/index.ts`, `packages/video/src/ReelVertical.tsx`
 - Test: `packages/video/src/__tests__/composition.test.ts`
 
 **Interfaces:**
 - Consumes: 없음
 - Produces:
-  - `ReelProps { subtitles: SubtitleJSON; audioUrl: string | null; scenes: SceneDirective[]; durationInSeconds: number; accentColor: string; backgroundImageUrl?: string; characterImageUrl?: string }`
-  - `FALLBACK_ACCENT = '#caff00'` — 팔레트가 없을 때만 쓰는 최후 기본값. 컴포넌트가 색을 직접 정하지 않게 한 곳에 모은다
+  - `Palette { accent: string; ink: string; paper: string }` — 스펙 §6의 `StyleSheet.palette`와 같은 형태
+  - `ReelProps { subtitles: SubtitleJSON; audioUrl: string | null; scenes: SceneDirective[]; durationInSeconds: number; palette: Palette; backgroundImageUrl?: string; characterImageUrl?: string }`
+  - `FALLBACK_ACCENT = '#caff00'`, `FALLBACK_PALETTE: Palette` — 팔레트가 주어지지 않을 때(Remotion Studio 프리뷰 등)만 쓰는 최후 기본값. **컴포넌트는 색을 직접 정하지 않는다. 색 리터럴은 이 파일에만 존재한다**
   - `SubtitleWord { word: string; start: number; end: number }`
   - `SubtitleSegment { id: number; text: string; start: number; end: number; words: SubtitleWord[] }`
   - `type SubtitleJSON = SubtitleSegment[]`
@@ -273,15 +274,30 @@ export interface ReelProps {
   audioUrl: string | null;
   scenes: SceneDirective[];
   durationInSeconds: number;
-  /** StyleSheet.palette.accent. 컴포넌트는 색을 직접 정하지 않는다 */
-  accentColor: string;
+  /** StyleSheet.palette 전체. 컴포넌트는 색을 직접 정하지 않는다 */
+  palette: Palette;
   /** 스타일 시트 배경 라이브러리에서 고른 이미지. AI 생성 질감을 코드 모션 아래에 깐다 */
   backgroundImageUrl?: string;
   characterImageUrl?: string;
 }
 
-/** 팔레트가 주어지지 않았을 때만 쓰는 최후 기본값 */
+export interface Palette {
+  accent: string;
+  ink: string;
+  paper: string;
+}
+
+/**
+ * 팔레트가 주어지지 않았을 때만 쓰는 최후 기본값. `lib/style-sheet.ts`의 `studio` 프리셋과
+ * 같은 값이다 — video 패키지는 독립 실행되므로 lib에서 import할 수 없어 여기 한 번 적는다.
+ * 색 리터럴이 허용되는 파일은 이 파일뿐이다.
+ */
 export const FALLBACK_ACCENT = '#caff00';
+export const FALLBACK_PALETTE: Palette = {
+  accent: FALLBACK_ACCENT,
+  ink: '#f4f4f0',
+  paper: '#0d0f10',
+};
 ```
 
 `packages/video/src/Root.tsx`:
@@ -291,7 +307,7 @@ import React from 'react';
 import { Composition } from 'remotion';
 import { ReelVertical } from './ReelVertical';
 import type { ReelProps } from './types';
-import { FALLBACK_ACCENT } from './types';
+import { FALLBACK_PALETTE } from './types';
 
 export const REEL_WIDTH = 1080;
 export const REEL_HEIGHT = 1920;
@@ -317,7 +333,7 @@ export const RemotionRoot: React.FC = () => (
       audioUrl: null,
       scenes: [],
       durationInSeconds: 5,
-      accentColor: FALLBACK_ACCENT,
+      palette: FALLBACK_PALETTE,
     } satisfies ReelProps}
   />
 );
@@ -338,8 +354,8 @@ import React from 'react';
 import { AbsoluteFill, Audio } from 'remotion';
 import type { ReelProps } from './types';
 
-export const ReelVertical: React.FC<ReelProps> = ({ audioUrl }) => (
-  <AbsoluteFill style={{ backgroundColor: '#0a0a0a' }}>
+export const ReelVertical: React.FC<ReelProps> = ({ audioUrl, palette }) => (
+  <AbsoluteFill style={{ backgroundColor: palette.paper }}>
     {audioUrl && <Audio src={audioUrl} />}
   </AbsoluteFill>
 );
@@ -773,17 +789,17 @@ import type { ReelProps } from './types';
 import { SceneRouter } from './scenes/SceneRouter';
 import { Subtitles } from './components/Subtitles';
 
-export const ReelVertical: React.FC<ReelProps> = ({ subtitles, audioUrl, scenes, accentColor }) => {
+export const ReelVertical: React.FC<ReelProps> = ({ subtitles, audioUrl, scenes, palette }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const currentTime = frame / fps;
 
   return (
-    <AbsoluteFill style={{ backgroundColor: '#0a0a0a' }}>
+    <AbsoluteFill style={{ backgroundColor: palette.paper }}>
       {audioUrl && <Audio src={audioUrl} />}
       <AbsoluteFill style={{ zIndex: 10 }}><SceneRouter scenes={scenes} /></AbsoluteFill>
       <AbsoluteFill style={{ zIndex: 20 }}>
-        <Subtitles subtitles={subtitles} currentTime={currentTime} bottom={160} accentColor={accentColor} />
+        <Subtitles subtitles={subtitles} currentTime={currentTime} bottom={160} accentColor={palette.accent} />
       </AbsoluteFill>
     </AbsoluteFill>
   );
@@ -795,7 +811,7 @@ export const ReelVertical: React.FC<ReelProps> = ({ subtitles, audioUrl, scenes,
 ```bash
 npx vitest run packages/video/src/__tests__/
 npx remotion render packages/video/src/index.ts ReelVertical /tmp/reel.mp4 \
-  --props='{"subtitles":[{"id":0,"text":"무릎 통증 잡는 법","start":0,"end":2,"words":[{"word":"무릎","start":0,"end":0.7},{"word":"통증","start":0.7,"end":1.4},{"word":"잡는 법","start":1.4,"end":2}]}],"audioUrl":null,"scenes":[{"type":"title_card","startTime":0,"endTime":2,"title":"무릎 통증 잡는 법"}],"durationInSeconds":2,"accentColor":"#caff00"}'
+  --props='{"subtitles":[{"id":0,"text":"무릎 통증 잡는 법","start":0,"end":2,"words":[{"word":"무릎","start":0,"end":0.7},{"word":"통증","start":0.7,"end":1.4},{"word":"잡는 법","start":1.4,"end":2}]}],"audioUrl":null,"scenes":[{"type":"title_card","startTime":0,"endTime":2,"title":"무릎 통증 잡는 법"}],"durationInSeconds":2,"palette":{"accent":"#caff00","ink":"#f4f4f0","paper":"#0d0f10"}}'
 ```
 
 기대: 테스트 PASS, 1080×1920 MP4에 타이틀과 자막이 보인다. 재생해서 눈으로 확인한다.
@@ -1855,7 +1871,7 @@ export const remotionEngine: VideoEngine = {
         audioUrl: audioPath,
         scenes,
         durationInSeconds: durationSec,
-        accentColor: sheet.palette.accent,
+        palette: sheet.palette,
         backgroundImageUrl: pickBackground(sheet, 0),
       },
       input.outPath,

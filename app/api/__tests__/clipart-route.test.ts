@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { crc32, deflateSync } from 'node:zlib';
 import { GET, POST } from '../clipart/route';
 import { signSession } from '@/lib/auth';
 import { clipartAssetKey } from '@/lib/clipart';
@@ -27,9 +28,66 @@ function req(method: string, ownerId?: string, body?: BodyInit) {
   });
 }
 
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+function chunk(type: string, data: Buffer): Buffer {
+  const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([length, body, crc]);
+}
+
+/**
+ * 1x1 PNG를 **진짜로** 만든다 — 시그니처·IHDR·(팔레트면 PLTE)·(요청하면 tRNS)·IDAT·IEND에
+ * 실제 CRC까지.
+ *
+ * 예전 픽스처는 `'PNG' + 'DATA'`라는 문자열이었다. PNG가 아닌 바이트를 행복 경로에 놓고도
+ * 초록불이었다는 뜻이고, 그래서 "라벨만 보고 통과시킨다"는 결함을 이 파일이 잡지 못했다.
+ * 픽스처가 가짜면 통과는 아무것도 증명하지 않는다.
+ */
+function png(colorType: 0 | 2 | 3 | 4 | 6, options: { trns?: boolean } = {}): Uint8Array<ArrayBuffer> {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1, 0);   // width
+  ihdr.writeUInt32BE(1, 4);   // height
+  ihdr[8] = 8;                // bit depth
+  ihdr[9] = colorType;
+
+  const parts = [PNG_SIGNATURE, chunk('IHDR', ihdr)];
+  if (colorType === 3) parts.push(chunk('PLTE', Buffer.from([0xff, 0xff, 0xff])));
+  if (options.trns) parts.push(chunk('tRNS', Buffer.from([0x00])));
+  const channels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colorType];
+  parts.push(chunk('IDAT', deflateSync(Buffer.concat([Buffer.alloc(1), Buffer.alloc(channels)]))));
+  parts.push(chunk('IEND', Buffer.alloc(0)));
+  return new Uint8Array(Buffer.concat(parts));
+}
+
+/** 캐릭터가 실제로 이래야 하는 모양: 알파 채널이 있는 RGBA PNG. */
+const TRANSPARENT_PNG = png(6);
+/** 흰 배경 위에 내보낸 진짜 PNG. 파일로서는 멀쩡하고 캐릭터로서는 흰 네모다. */
+const OPAQUE_PNG = png(2);
+/**
+ * 진짜 JPEG의 앞부분(SOI + JFIF APP0).
+ *
+ * 길이를 넉넉히 두고 **26번째 바이트를 일부러 `0x06`으로 둔다.** 그 자리는 PNG였다면 IHDR의
+ * color type이 놓일 곳이고 `0x06`은 RGBA다. 시그니처 검사를 지우면 이 바이트가 "알파 채널이
+ * 있다"로 읽혀 통과해 버린다 — 픽스처가 짧으면 그 자리가 비어 있어서 검사를 지워도 우연히
+ * 막히고, 그러면 이 테스트는 아무것도 증명하지 못한다.
+ */
+const JPEG_BYTES = new Uint8Array([
+  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+  0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43,
+  0x00, 0x06, 0x04, 0x05, 0x06, 0x05, 0x04, 0x06, 0x06, 0x05, 0x06, 0x07,
+]);
+
+function blob(bytes: Uint8Array<ArrayBuffer>, type: string) {
+  return new Blob([bytes], { type });
+}
+
 function form(keyword: string, image?: Blob) {
   const fd = new FormData();
-  fd.append('image', image ?? new Blob(['PNGDATA'], { type: 'image/png' }), 'c.png');
+  fd.append('image', image ?? blob(TRANSPARENT_PNG, 'image/png'), 'c.png');
   fd.append('keyword', keyword);
   fd.append('aliases', '별칭1,별칭2');
   fd.append('category', '감정');
@@ -123,13 +181,50 @@ describe('POST /api/clipart', () => {
   /**
    * JPEG는 **형식 취향의 문제가 아니다.** 캐릭터는 이미 그려진 씬 위에 얹히는데 JPEG에는
    * 알파 채널이 없다. 통과시키면 수강생의 릴스에 불투명한 흰 사각형이 박힌 채로 나가고,
-   * 200을 받은 수강생은 왜 그런지 알 방법이 없다. 올바른 결과를 낼 수 없는 형식은 받지 않는다.
+   * 200을 받은 수강생은 왜 그런지 알 방법이 없다.
    */
   it('rejects a jpeg because a character with no alpha channel lands as a white box', async () => {
-    const jpeg = new Blob(['JPEGDATA'], { type: 'image/jpeg' });
-    const res = await POST(req('POST', 'u1', form('기쁨', jpeg)));
+    const res = await POST(req('POST', 'u1', form('기쁨', blob(JPEG_BYTES, 'image/jpeg'))));
     expect(res.status).toBe(400);
     expect(await listStudentClipart('u1')).toEqual([]);
+  });
+
+  /**
+   * **이 검사가 이 라운드의 핵심이다.**
+   *
+   * multipart 파트의 `Content-Type`은 올리는 쪽이 정한다. 그리고 이건 공격자만 밟는 길이
+   * 아니다 — "PNG여야 합니다"를 읽은 수강생이 Finder에서 `char.jpg`를 `char.png`로 이름만
+   * 바꾸면 OS가 확장자를 보고 `image/png`를 붙여 준다. 라벨만 보는 검사는 다시 내보낸
+   * 수강생은 걸러 내고 이름만 바꾼 수강생은 통과시킨다 — 정확히 거꾸로다.
+   */
+  it('rejects jpeg bytes that claim to be a png, however the label was set', async () => {
+    const renamed = new File([JPEG_BYTES], 'char.png', { type: 'image/png' });
+    const res = await POST(req('POST', 'u1', form('기쁨', renamed)));
+    expect(res.status).toBe(400);
+    expect(await listStudentClipart('u1')).toEqual([]);
+  });
+
+  /**
+   * 거절 문구가 약속한 것을 검사가 실제로 봐야 한다. 흰 배경 위에 내보낸 RGB PNG는 파일로서는
+   * 완전한 PNG이고, 통과시키면 우리가 문구에 적은 바로 그 흰 네모가 영상에 박힌다.
+   */
+  it('rejects a real png that has no alpha channel at all', async () => {
+    const res = await POST(req('POST', 'u1', form('기쁨', blob(OPAQUE_PNG, 'image/png'))));
+    expect(res.status).toBe(400);
+    expect(await listStudentClipart('u1')).toEqual([]);
+  });
+
+  // 팔레트 PNG는 알파 채널 대신 `tRNS` 청크로 투명도를 싣는다. 있으면 받고, 없으면 거절이다.
+  it('accepts a palette png only when it carries a tRNS chunk', async () => {
+    expect((await POST(req('POST', 'u1', form('기쁨', blob(png(3), 'image/png'))))).status)
+      .toBe(400);
+    expect((await POST(req('POST', 'u1', form('기쁨', blob(png(3, { trns: true }), 'image/png')))))
+      .status).toBe(200);
+  });
+
+  it('accepts a greyscale png that carries an alpha channel', async () => {
+    expect((await POST(req('POST', 'u1', form('기쁨', blob(png(4), 'image/png'))))).status)
+      .toBe(200);
   });
 
   /**
@@ -137,10 +232,22 @@ describe('POST /api/clipart', () => {
    * 다시 올리고 여전히 흰 네모를 얻는다 — 변환은 없던 투명 배경을 만들어 내지 못한다.
    */
   it('tells the student the background must be transparent, not merely that it must be a png', async () => {
-    const jpeg = new Blob(['JPEGDATA'], { type: 'image/jpeg' });
-    const body = await (await POST(req('POST', 'u1', form('기쁨', jpeg)))).json();
-    expect(body.error).toContain('투명');
-    expect(body.error).toContain('PNG');
+    const notPng = await (await POST(req('POST', 'u1', form('기쁨', blob(JPEG_BYTES, 'image/png'))))).json();
+    const noAlpha = await (await POST(req('POST', 'u1', form('기쁨', blob(OPAQUE_PNG, 'image/png'))))).json();
+    expect(notPng.error).toContain('투명');
+    expect(noAlpha.error).toContain('투명');
+  });
+
+  /**
+   * 두 거절은 원인도 해법도 다르다. "이건 PNG가 아니다"와 "이 PNG엔 투명도가 없다"에 같은
+   * 문장을 주면 수강생은 같은 잘못된 처방을 두 번 시도한다.
+   */
+  it('gives the two rejections different sentences', async () => {
+    const notPng = await (await POST(req('POST', 'u1', form('기쁨', blob(JPEG_BYTES, 'image/png'))))).json();
+    const noAlpha = await (await POST(req('POST', 'u1', form('기쁨', blob(OPAQUE_PNG, 'image/png'))))).json();
+    expect(notPng.error).not.toBe(noAlpha.error);
+    // 이름만 바꾼 수강생에게는 그게 통하지 않는다는 걸 알려야 한다.
+    expect(notPng.error).toContain('.png');
   });
 
   /**
@@ -151,6 +258,44 @@ describe('POST /api/clipart', () => {
   it('rejects an image larger than the cap and says the cap out loud', async () => {
     const huge = new Blob([new Uint8Array(4 * 1024 * 1024 + 1)], { type: 'image/png' });
     const res = await POST(req('POST', 'u1', form('기쁨', huge)));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('4MB');
+    expect(await listStudentClipart('u1')).toEqual([]);
+  });
+
+  /**
+   * 상한은 두 번 본다. 이건 **파싱 전** 한 번 — `Content-Length`가 명백히 큰 요청을 본문을
+   * 메모리에 올리기 전에 끊는다.
+   *
+   * 비어 있지 않다는 걸 증명하려고 multipart로 파싱될 수 없는 본문(`'x'`)을 보낸다. 라우트가
+   * 파싱까지 갔다면 "multipart/form-data required"가 나왔을 것이다. 크기 문구가 나온다는 것은
+   * 파싱 전에 끊었다는 뜻이다.
+   */
+  it('rejects an oversized request before it parses the body at all', async () => {
+    const res = await POST(new Request('http://localhost/api/clipart', {
+      method: 'POST',
+      headers: {
+        Cookie: `student_session=${signSession('u1')}`,
+        'Content-Length': String(64 * 1024 * 1024),
+      },
+      body: 'x',
+    }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('4MB');
+    expect(await listStudentClipart('u1')).toEqual([]);
+  });
+
+  /**
+   * 헤더는 올리는 쪽이 쓰는 값이므로 그것만 믿지 않는다. 작게 적어 보내도 파싱 뒤 실제
+   * 크기가 판정한다 — 이쪽이 진짜 상한이고 헤더 검사는 그 앞의 편의다.
+   */
+  it('still rejects an oversized image when the content-length header lies', async () => {
+    const huge = new Blob([new Uint8Array(4 * 1024 * 1024 + 1)], { type: 'image/png' });
+    const res = await POST(new Request('http://localhost/api/clipart', {
+      method: 'POST',
+      headers: { Cookie: `student_session=${signSession('u1')}`, 'Content-Length': '10' },
+      body: form('기쁨', huge),
+    }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toContain('4MB');
     expect(await listStudentClipart('u1')).toEqual([]);
@@ -168,7 +313,8 @@ describe('POST /api/clipart', () => {
     expect(saved.file.startsWith('/')).toBe(false);
     expect(saved.file).toBe(clipartAssetKey(saved));
     expect(existsSync(path.join(publicDir, saved.file))).toBe(true);
-    expect(readFileSync(path.join(publicDir, saved.file), 'utf8')).toBe('PNGDATA');
+    expect(readFileSync(path.join(publicDir, saved.file)).equals(Buffer.from(TRANSPARENT_PNG)))
+      .toBe(true);
   });
 
   it('marks the stored entry as student source and splits aliases on commas', async () => {

@@ -10,17 +10,72 @@ import { selectArtifactStore } from '@/lib/store';
 export const dynamic = 'force-dynamic';
 
 /**
- * **PNG만 받는다.** 확장자 취향이 아니라 알파 채널 때문이다.
+ * **PNG만 받는다. 그리고 그 판정을 `File.type`으로 하지 않는다.**
  *
- * 캐릭터는 이미 그려진 씬 **위에 얹힌다.** JPEG에는 투명도가 없으므로 JPG로 올린 캐릭터는
- * 영상 위에 불투명한 사각형으로 앉는다 — 조금 흐려지는 정도가 아니라 눈에 띄게 망가진
- * 영상이고, 수강생은 왜 그런지 알 방법이 없다. 올바른 결과를 낼 수 없는 형식을 받아 주는 건
- * 친절이 아니다. 운영자 프리셋 라이브러리의 그림이 전부 RGBA PNG인 이유도 같다.
+ * 왜 PNG만인가: 캐릭터는 이미 그려진 씬 **위에 얹힌다.** JPEG에는 알파 채널이 없으므로 JPG로
+ * 올린 캐릭터는 영상 위에 불투명한 사각형으로 앉는다 — 조금 흐려지는 정도가 아니라 눈에 띄게
+ * 망가진 영상이고, 수강생은 왜 그런지 알 방법이 없다. 운영자 프리셋 라이브러리의 그림이 전부
+ * RGBA PNG인 이유도 같다.
+ *
+ * 왜 라벨을 믿지 않는가: multipart 파트의 `Content-Type`은 **올리는 쪽이 정한다.** 게다가
+ * 이건 공격자만 밟는 길이 아니다. "PNG여야 합니다"를 읽은 수강생이 Finder에서 `char.jpg`를
+ * `char.png`로 이름만 바꾸면 OS가 확장자를 보고 `image/png`를 붙여 준다 — 다시 내보내기보다
+ * 훨씬 자연스러운 반응이다. 라벨만 보면 조심한 수강생은 걸러 내고 정작 걸러야 할 수강생은
+ * 통과시키는 검사가 된다. 그래서 실제 바이트를 본다.
  *
  * 이 결정이 `clipartAssetKey`가 확장자를 `.png`로 고정하는 것과 짝이다(`lib/clipart.ts`).
- * 한쪽만 되돌리면 확장자와 내용이 어긋난다.
  */
-const ALLOWED_TYPES = new Set(['image/png']);
+
+/** PNG 파일의 첫 8바이트. 이것만이 "PNG인가"에 대한 신뢰할 수 있는 답이다. */
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/** IHDR의 color type이 놓인 자리: 시그니처 8 + 길이 4 + `IHDR` 4 + 폭 4 + 높이 4 + 비트깊이 1. */
+const IHDR_COLOR_TYPE_OFFSET = 25;
+
+/** color type 4(회색+알파)·6(RGBA)는 알파 채널을 **가지고 있다**. */
+const ALPHA_COLOR_TYPES = new Set([4, 6]);
+
+/** color type 3(팔레트)은 알파 채널 대신 `tRNS` 청크로 투명도를 싣는다. */
+const PALETTE_COLOR_TYPE = 3;
+
+function looksLikePng(bytes: Buffer): boolean {
+  return bytes.length > IHDR_COLOR_TYPE_OFFSET
+    && bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE);
+}
+
+/**
+ * PNG 청크를 순서대로 걸어가며 그 타입이 있는지 본다.
+ *
+ * `bytes.includes('tRNS')`로 훑지 않는 이유: 그건 픽셀 데이터 안에 우연히 같은 네 글자가
+ * 들어 있어도 참이 된다. 투명하지 않은 그림을 투명하다고 답하는 쪽의 실수라 값이 싸지 않다.
+ */
+function hasChunk(bytes: Buffer, type: string): boolean {
+  // 시그니처 다음이 첫 청크다.
+  let at = PNG_SIGNATURE.length;
+  while (at + 8 <= bytes.length) {
+    if (bytes.subarray(at + 4, at + 8).toString('latin1') === type) return true;
+    // 길이 4 + 타입 4 + 데이터 + CRC 4. 최소 12씩 나아가므로 깨진 길이로도 멈춘다.
+    at += 12 + bytes.readUInt32BE(at);
+  }
+  return false;
+}
+
+/**
+ * 투명 배경을 **담을 수 있는** PNG인가.
+ *
+ * 알파 채널이 아예 없는 PNG는 투명 배경일 수가 없다. 흰 배경 위에 내보낸 RGB PNG가
+ * 그대로 통과하면 우리가 거절 문구에 적은 바로 그 흰 네모가 영상에 박힌다 — 문구가 약속한
+ * 것과 검사가 보는 것이 어긋나면 안 된다.
+ *
+ * **여기서 못 잡는 것**: 알파 채널이 있는데 모든 픽셀이 불투명한 RGBA PNG. 그건 픽셀을
+ * 열어 봐야 알 수 있고, 그 비용은 이 경계에서 치를 값이 아니다(리포트에 한계로 적어 뒀다).
+ */
+function canHoldTransparency(bytes: Buffer): boolean {
+  const colorType = bytes[IHDR_COLOR_TYPE_OFFSET];
+  if (ALPHA_COLOR_TYPES.has(colorType)) return true;
+  if (colorType === PALETTE_COLOR_TYPE) return hasChunk(bytes, 'tRNS');
+  return false;
+}
 
 /**
  * 업로드 상한. 두 가지가 이 숫자를 정했다.
@@ -115,18 +170,26 @@ export async function POST(request: Request) {
     return badRequest('캐릭터 이미지 파일이 필요합니다.');
   }
 
-  if (!ALLOWED_TYPES.has(image.type)) {
-    // 무엇이 안 되는지가 아니라 **왜 안 되는지**를 말한다. "PNG만 됩니다"만 읽은 수강생은
-    // JPG를 PNG로 변환해 다시 올리고 여전히 흰 네모를 얻는다. 배경이 투명해야 한다는 걸
-    // 알아야 내보내기부터 다시 한다.
+  if (image.size > MAX_UPLOAD_BYTES) {
+    return badRequest(TOO_LARGE_MESSAGE);
+  }
+
+  // 바이트를 여기서 한 번 읽어 검사와 저장에 같이 쓴다. 크기 상한을 통과한 뒤라 안전하다.
+  const bytes = Buffer.from(await image.arrayBuffer());
+
+  // 두 거절은 원인도 해법도 다르다. 같은 문장을 주면 수강생은 같은 잘못된 처방을 두 번 시도한다.
+  if (!looksLikePng(bytes)) {
     return badRequest(
-      '캐릭터 그림은 배경이 투명한 PNG여야 합니다. JPG처럼 투명 배경을 담지 못하는 형식으로 올리면'
-      + ' 캐릭터가 영상 위에 흰 네모로 얹혀 보입니다.',
+      'PNG 파일이 아닙니다. 확장자만 .png로 바꾼 JPG는 PNG가 되지 않습니다 —'
+      + ' 그림 도구에서 배경을 지우고 투명 PNG로 다시 내보내 주세요.',
     );
   }
 
-  if (image.size > MAX_UPLOAD_BYTES) {
-    return badRequest(TOO_LARGE_MESSAGE);
+  if (!canHoldTransparency(bytes)) {
+    return badRequest(
+      '이 PNG에는 투명 배경이 없습니다. 캐릭터는 영상 위에 얹히기 때문에 흰 배경이 그대로'
+      + ' 네모로 함께 보입니다. 배경을 지운 뒤 투명도를 포함해 저장한 PNG로 올려 주세요.',
+    );
   }
 
   /**
@@ -144,8 +207,9 @@ export async function POST(request: Request) {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'clipart-upload-'));
   const tempPath = path.join(tempDir, path.basename(key));
   try {
-    await writeFile(tempPath, Buffer.from(await image.arrayBuffer()));
-    const published = await selectArtifactStore().publish(tempPath, key, image.type);
+    await writeFile(tempPath, bytes);
+    // 라벨이 아니라 검사를 통과한 사실로 타입을 정한다. `image.type`은 올리는 쪽이 쓴 값이다.
+    const published = await selectArtifactStore().publish(tempPath, key, 'image/png');
     const saved = await addStudentClipart({
       id,
       ownerId,

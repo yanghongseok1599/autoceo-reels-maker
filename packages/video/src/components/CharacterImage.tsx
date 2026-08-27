@@ -1,5 +1,6 @@
 import React from 'react';
 import { AbsoluteFill, Img, interpolate, useCurrentFrame, useVideoConfig } from 'remotion';
+import type { Palette } from '../types';
 import { resolveAudioSrc } from '../utils/audioSrc';
 
 /**
@@ -52,6 +53,21 @@ export const BOX_BOTTOM = 0;
 export const ENTRY_RISE = 28;
 
 /**
+ * 자막 뒤에 까는 스크림(그라디언트 가림막)의 높이. 프레임 바닥에 붙으므로 y 1400~1920이다.
+ *
+ * 자막은 캐릭터가 뒤에 깔리면 대비가 17.31:1에서 3.27:1까지 떨어진다. 큰 글자 기준(3:1)은
+ * 넘지만 **최소치**일 뿐이고, 이 릴은 폰으로 야외에서 보는 물건이라 자막이 정보의 본체다.
+ * 그래서 위는 완전히 투명하고 아래로 갈수록 `palette.paper`가 짙어지는 세로 그라디언트를
+ * 캐릭터 **위**, 자막 **아래**에 깐다. 자막 가독성을 뒤에 뭐가 있든 상관없게 떼어 놓는
+ * 숏폼의 표준 처리다.
+ *
+ * 높이 520은 세 줄 자막(y 1550~1760)을 덮고도 위로 150px 남는 값이다 — 그 여유가 있어야
+ * 위쪽 경계가 "막대"가 아니라 서서히 어두워지는 것으로 읽힌다. 캐릭터의 얼굴 높이
+ * (세로 클립아트 기준 y 1330~1500)는 스크림이 옅은 구간이라 그대로 보인다.
+ */
+export const SCRIM_HEIGHT = 520;
+
+/**
  * 위 상수들을 고른 근거가 된 **실측값**. 테스트가 크기와 근거를 함께 붙들도록 내보낸다 —
  * 이 값이 바뀌면 상자 크기도 다시 계산해야 한다.
  */
@@ -74,9 +90,25 @@ export const MEASURED = {
    * 프레임을 원본 해상도로 잘라 직접 읽어 확인했다. 다만 여유가 얇다.
    */
   captionContrastOverCharacter: 3.27,
+  /**
+   * 스크림을 깐 뒤 같은 프레임들에서 다시 잰 최악 대비. 위 3.27:1을 대체하는 값이다 —
+   * 3.27은 "스크림이 없으면 이렇게 된다"는 기록으로 남겨 둔다.
+   */
+  captionContrastWithScrim: 11.39,
   /** WCAG AA 큰 글자(18.66px 이상 굵은 글씨) 기준. 자막은 46px/800이라 여기에 해당한다 */
   wcagAaLargeText: 3,
+  /** WCAG AA 본문 글자 기준. 큰 글자인 자막에 이걸 목표로 삼아 여유를 둔다 */
+  wcagAaNormalText: 4.5,
 } as const;
+
+/**
+ * 씬이 루트에 건 `scale(s)`를 상쇄하는 배율. 캐릭터 레이어가 씬 루트와 **같은 크기·같은
+ * 변형 원점**(프레임 전체 AbsoluteFill의 가운데)이라 `1/s` 하나로 위치와 크기가 정확히
+ * 되돌아온다 — 자식이 p → C + (p-C)/s, 부모가 그 결과 → C + (p-C) = p.
+ */
+export function undoSceneScale(sceneScale: number): number {
+  return sceneScale > 0 ? 1 / sceneScale : 1;
+}
 
 /** 1080x1920 프레임에서 상자가 차지하는 세로 구간 */
 export function characterBoxBounds(): { top: number; bottom: number } {
@@ -107,15 +139,39 @@ export function characterEntry(sceneFrame: number, fps: number) {
  * 캐릭터는 모션 없이 튀어나온다. 다만 이 값은 **씬의 시작이 아니라 이 캐릭터가 처음
  * 등장한 씬의 시작**이다 — `SceneRouter.characterRunStart` 주석 참고.
  */
-export const CharacterImage: React.FC<{ src: string; startTime: number }> = ({ src, startTime }) => {
+export const CharacterImage: React.FC<{
+  src: string;
+  startTime: number;
+  palette: Palette;
+  /** 이 캐릭터가 얹힌 씬이 루트에 건 scale 배율 */
+  sceneScale: number;
+}> = ({ src, startTime, palette, sceneScale }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const sceneFrame = frame - Math.round(startTime * fps);
   const { opacity, translateY } = characterEntry(sceneFrame, fps);
 
+  /**
+   * 씬이 루트(프레임 전체 크기의 AbsoluteFill)에 건 `scale(s)`를 여기서 되돌린다.
+   *
+   * 이 AbsoluteFill도 프레임 전체 크기라 **변형 원점이 씬 루트와 같은 지점(가운데)** 이다.
+   * 그래서 `scale(1/s)` 하나면 위치와 크기가 정확히 상쇄된다 — 따로 translate가 필요 없다.
+   * (증명: 자식이 p → C + (p-C)/s, 부모가 그 결과 → C + (p-C) = p.)
+   *
+   * 이게 없으면 캐릭터가 씬의 등장 배율(0.7)에서 프레임 바닥에서 288px 떠오른다. 씬 글자에
+   * 걸린 변형은 손대지 않고 이 슬롯만 면제하는 방법이다 — 그 변형은 여섯 컴포넌트가
+   * 공유하며 이미 맞춰 놓은 값이다.
+   */
+  const counterScale = undoSceneScale(sceneScale);
+
   return (
     <AbsoluteFill
-      style={{ justifyContent: 'flex-end', alignItems: 'center', paddingBottom: BOX_BOTTOM }}
+      style={{
+        justifyContent: 'flex-end',
+        alignItems: 'center',
+        paddingBottom: BOX_BOTTOM,
+        transform: `scale(${counterScale})`,
+      }}
     >
       <Img
         src={resolveAudioSrc(src)}
@@ -128,6 +184,20 @@ export const CharacterImage: React.FC<{ src: string; startTime: number }> = ({ s
           objectPosition: 'bottom',
           opacity,
           transform: `translateY(${translateY}px)`,
+        }}
+      />
+
+      {/*
+        자막 스크림. 캐릭터 **위**(이 요소가 Img 뒤에 온다), 본문 글자와 자막 **아래**에 앉는다.
+        캐릭터와 같은 opacity로 함께 나타나므로 캐릭터가 없는 동안 어두운 띠만 남는 일은 없다.
+      */}
+      <AbsoluteFill
+        style={{
+          top: undefined,
+          height: SCRIM_HEIGHT,
+          bottom: 0,
+          opacity,
+          background: `linear-gradient(180deg, transparent 0%, ${palette.paper}40 22%, ${palette.paper}b3 46%, ${palette.paper}e0 72%, ${palette.paper}eb 100%)`,
         }}
       />
     </AbsoluteFill>

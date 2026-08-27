@@ -26,7 +26,7 @@ export function findActiveScene(
 export function renderScene(
   scene: SceneDirective,
   palette: Palette,
-  underlay?: React.ReactNode,
+  underlay?: (sceneScale: number) => React.ReactNode,
 ): React.ReactNode {
   const p = { palette, underlay };
   switch (scene.type) {
@@ -117,12 +117,16 @@ export const SceneRouter: React.FC<{
          * 나머지가 전부 그렇게 움직이므로 오히려 자연스럽고, scale이 캐릭터를 밀어내도
          * 위로 밀리면 글자에, 아래로 밀리면 자막에 가려질 뿐이라 안전한 방향이다.
          */
-        active.characterImageUrl ? (
-          <CharacterImage
-            src={active.characterImageUrl}
-            startTime={characterRunStart(scenes, scenes.indexOf(active))}
-          />
-        ) : undefined,
+        active.characterImageUrl
+          ? (sceneScale) => (
+            <CharacterImage
+              src={active.characterImageUrl as string}
+              startTime={characterRunStart(scenes, scenes.indexOf(active))}
+              palette={palette}
+              sceneScale={sceneScale}
+            />
+          )
+          : undefined,
       )}
     </AbsoluteFill>
   );

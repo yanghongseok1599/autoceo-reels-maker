@@ -5,8 +5,8 @@ import { ReelVertical } from '../ReelVertical';
 import type { ReelProps, SceneDirective } from '../types';
 import { FALLBACK_PALETTE } from '../types';
 import {
-  BOX_BOTTOM, BOX_HEIGHT, BOX_WIDTH, ENTRY_RISE, MEASURED,
-  characterBoxBounds, characterEntry,
+  BOX_BOTTOM, BOX_HEIGHT, BOX_WIDTH, ENTRY_RISE, MEASURED, SCRIM_HEIGHT,
+  characterBoxBounds, characterEntry, undoSceneScale,
 } from '../components/CharacterImage';
 
 // reelBackground.test.tsx와 같은 이유의 모킹 — Remotion 훅과 <Img>는 컴포지션 밖에서 던진다
@@ -65,6 +65,9 @@ describe('SceneRouter — 캐릭터 오버레이', () => {
     // contain이 남기는 여백을 아래로 몰지 않으면 정사각·가로 원본이 바닥에서 뜬다
     expect(html).toContain('object-position:bottom');
     expect(html).toContain('padding-bottom:0');
+    // 자막 스크림 — 캐릭터 위, 자막 아래
+    expect(html).toContain('height:520px');
+    expect(html).toContain('linear-gradient(180deg, transparent 0%');
   });
 });
 
@@ -109,9 +112,36 @@ describe('캐릭터 상자 기하', () => {
   });
 
   /** 캐릭터 뒤에서도 자막 대비가 WCAG AA 큰 글자 기준 위에 있어야 한다 (실측 기반) */
-  it('keeps caption contrast above the WCAG AA large-text floor', () => {
-    expect(MEASURED.captionContrastOverCharacter)
-      .toBeGreaterThanOrEqual(MEASURED.wcagAaLargeText);
+  it('pins the scrim height that covers a three-line caption', () => {
+    expect(SCRIM_HEIGHT).toBe(520);
+    // 스크림 윗변은 세 줄 자막(y 1550)보다 위에서 시작해야 위 경계가 부드럽게 읽힌다
+    expect(MEASURED.frameHeight - SCRIM_HEIGHT).toBeLessThan(MEASURED.subtitleTop3Line);
+  });
+
+  /**
+   * 스크림 없이는 3.27:1 — 큰 글자 기준(3:1)은 넘지만 9%밖에 안 남는다. 스크림을 깔고 다시
+   * 재서 본문 글자 기준(4.5:1)보다 넉넉히 위에 오도록 했다. 두 값을 다 붙들어, 스크림을
+   * 걷어내면 무엇이 사라지는지 코드에서 보이게 한다.
+   */
+  it('lifts caption contrast well past the normal-text floor with the scrim', () => {
+    expect(MEASURED.captionContrastOverCharacter).toBeLessThan(MEASURED.wcagAaNormalText);
+    expect(MEASURED.captionContrastWithScrim)
+      .toBeGreaterThan(MEASURED.wcagAaNormalText * 2);
+  });
+
+  /**
+   * 캐릭터는 씬의 scale에 끌려다니면 안 된다 — 등장 배율 0.7에서 프레임 바닥에서 288px
+   * 떠올랐다. 역배율이 그걸 정확히 상쇄한다.
+   */
+  it('cancels the scene scale exactly', () => {
+    for (const s of [0.7, 0.8, 0.92, 1, 1.04, 1.12]) {
+      expect(undoSceneScale(s) * s).toBeCloseTo(1, 10);
+    }
+  });
+
+  it('falls back to 1 for a scale that would divide by zero', () => {
+    expect(undoSceneScale(0)).toBe(1);
+    expect(undoSceneScale(-1)).toBe(1);
   });
 
   /**

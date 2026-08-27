@@ -4,7 +4,9 @@
 
 **Goal:** 수강생이 강의에서 만든 자기 캐릭터를 업로드해 쓰고, 아직 안 만든 수강생에게는 운영자 캐릭터가 기본으로 나오되 그것이 기본값임을 앱 안에서 명확히 알린다.
 
-**Architecture:** 클립아트를 수강생별로 소유하게 한다 — 목소리와 같은 구조다. 카탈로그는 `store`에, 이미지는 아티팩트 저장소에 둔다. 수강생이 등록한 것이 없으면 운영자 프리셋(Codex 클립아트 라이브러리 104장)으로 폴백한다. 워커가 씬 텍스트에 맞는 이미지만 렌더 publicDir로 복사한다 — 나레이션 오디오와 같은 경로 규약이다.
+**Architecture:** 클립아트를 수강생별로 소유하게 한다 — 목소리와 같은 구조다. 카탈로그는 `store`에, 이미지는 아티팩트 저장소에 둔다. 수강생이 등록한 것이 없으면 운영자 프리셋(Codex 클립아트 라이브러리 104장)으로 폴백한다.
+
+**수강생 이미지는 복사하지 않는다.** `ArtifactStore.publish`가 이미 렌더러가 닿는 곳에 둔다 — 로컬은 `public/` 아래, 배포는 Blob 절대 URL이고 `resolveAudioSrc`가 두 경우를 구분한다. 복사가 필요한 것은 **프리셋뿐**이다. 그것만 Codex 스킬 디렉터리(public 밖)에 있다.
 
 **Tech Stack:** Next.js 16 · React 19 · Remotion 4.0.517 · TypeScript · Vitest
 
@@ -42,6 +44,7 @@
 | `lib/clipart-preset.ts` | 운영자 프리셋 로드 (Codex 라이브러리) |
 | `lib/clipart.ts` | 키워드 매칭 · 에셋 키 |
 | `app/api/clipart/route.ts` | 업로드(POST) · 목록(GET) |
+| — | Task 3이 `lib/store/types.ts`·`blob-artifact-store.ts`·`file-artifact-store.ts`에 `contentType`을 추가한다 |
 | `packages/video/src/components/CharacterImage.tsx` | 씬 위 캐릭터 오버레이 |
 
 **수정**
@@ -441,7 +444,13 @@ npx vitest run app/api/__tests__/clipart-route.test.ts
 
 - [ ] **Step 3: 구현**
 
-업로드된 이미지는 아티팩트 저장소에 올린다. 저장 키는 `clipartAssetKey`가 정한다 — 엔트리를 먼저 만들어 `id`를 확보한 뒤 그 키로 올린다. 세션은 `readSessionFromRequest`로 읽는다(`app/api/projects/route.ts`가 같은 방식).
+업로드된 이미지는 아티팩트 저장소에 올린다. 저장 키는 `clipartAssetKey`가 정한다 — 엔트리를 먼저 만들어 `id`를 확보한 뒤 그 키로 올린다. 세션은 `readSessionFromRequest`(`lib/auth.ts:57`)로 읽는다. `app/api/voicebox/clone/route.ts`가 401 처리와 FormData 검증을 그대로 보여주니 먼저 읽는다.
+
+**두 가지를 먼저 고쳐야 업로드가 동작한다:**
+
+1. **`ArtifactStore.publish`가 `contentType: 'video/mp4'`를 하드코딩한다** (`lib/store/blob-artifact-store.ts`). PNG를 그대로 올리면 배포에서 이미지가 `video/mp4`로 서빙돼 브라우저와 렌더러 양쪽에서 깨진다. `publish(localPath, key, contentType?)`로 선택 인자를 추가하고 기본값을 `video/mp4`로 둬 기존 호출부를 그대로 둔다. `lib/store/types.ts`의 인터페이스와 두 구현 모두 고친다.
+
+2. **`publish`는 `localPath`를 받는데 라우트가 가진 것은 `File`이다.** 업로드 바이트를 임시 파일에 먼저 쓴 뒤 그 경로로 `publish`하고, 끝나면 지운다.
 
 `image`가 없거나 `image/png`·`image/jpeg`가 아니면 400. `keyword`가 비면 400. `aliases`는 쉼표로 나누고 빈 항목을 버린다.
 
@@ -598,7 +607,7 @@ git commit -m "feat: overlay a character on the active scene"
 - Consumes: `catalogFor` (Task 2), `matchClipart`·`clipartAssetKey` (Task 1), `presetDir` (Task 2)
 - Produces:
   - `buildScenes(input: { subtitles; script; sheet; catalog: ClipartEntry[] }): { scenes: SceneDirective[]; usedClipart: ClipartEntry[] }`
-  - `copyClipart(entries: ClipartEntry[], publicDir: string): Promise<void>`
+  - `copyClipart(entries: ClipartEntry[], publicDir: string): Promise<void>` — **프리셋 엔트리만** 처리한다
 
 **반환 타입이 바뀐다** — 워커가 어떤 이미지를 복사할지 알아야 한다. 계획 2a에서 `buildScenes`는 배열을 돌려줬으므로 호출부를 함께 고친다.
 
@@ -700,11 +709,8 @@ export async function copyClipart(entries: ClipartEntry[], publicDir: string): P
     const target = path.join(publicDir, clipartAssetKey(entry));
     try {
       await mkdir(path.dirname(target), { recursive: true });
-      if (entry.source === 'preset') {
-        await copyFile(path.join(presetDir(), entry.file), target);
-      } else {
-        await fetchArtifactInto(entry.file, target);
-      }
+      if (entry.source !== 'preset') continue;  // 수강생 이미지는 publish가 이미 도달 가능하게 뒀다
+      await copyFile(path.join(presetDir(), entry.file), target);
     } catch {
       // 원본 없음 — 이 씬은 캐릭터 없이 렌더된다
     }
@@ -712,7 +718,7 @@ export async function copyClipart(entries: ClipartEntry[], publicDir: string): P
 }
 ```
 
-`fetchArtifactInto`는 아티팩트 저장소에서 파일을 내려받아 저장한다. 로컬 구현은 복사, Blob 구현은 URL fetch다. `lib/store/index.ts`의 아티팩트 저장소 인터페이스에 읽기 메서드가 없다면 이 Task에서 추가한다.
+`ArtifactStore`에는 읽기 메서드가 없고, **필요하지도 않다.** 수강생 엔트리의 `file`은 `publish`가 돌려준 값이고, 그것이 곧 `characterImageUrl`이다. 앞에 `/`가 붙어 오면 벗긴다 — 이 저장소의 규약은 앞 슬래시 없는 public 루트 상대 경로다(`generated-audio/ab.mp3`).
 
 - [ ] **Step 5: 엔진에 연결**
 

@@ -14,6 +14,12 @@ import { assertSafeKey, type ArtifactStore } from './types';
 export const fileArtifactStore: ArtifactStore & { kind: 'file' } = {
   kind: 'file',
 
+  /**
+   * `contentType`을 받지 않는다. 여기서는 파일을 `public/` 아래로 복사할 뿐이고 응답 헤더는
+   * 개발 서버가 확장자로 정하기 때문이다. 인터페이스에는 선택 인자로 있으므로 호출자는
+   * 두 구현에 같은 방식으로 넘길 수 있다 — 다만 그 값이 실제로 쓰이는 곳은 Blob 구현뿐이다
+   * (`lib/store/types.ts`의 `publish` 주석).
+   */
   async publish(localPath: string, key: string): Promise<string> {
     assertSafeKey(key);
     const dest = path.join(appPublicDir(), key);

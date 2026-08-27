@@ -18,6 +18,25 @@ async function readAll(): Promise<ClipartEntry[]> {
   return Array.isArray(entries) ? entries : [];
 }
 
+/**
+ * 새 항목의 id를 만든다. **저장소를 건드리지 않는다** — 그래서 저장보다 먼저 부를 수 있다.
+ *
+ * 업로드 경로에 순환이 있었기 때문에 이 함수가 따로 있다: 그림이 올라갈 자리는
+ * `clipartAssetKey(entry)`가 정하고, 그건 `id`를 해싱한다. 그런데 저장할 `file`은 업로드가
+ * 끝나야 나오는 값이다. 저장 함수가 id를 만들면 "id를 얻으려면 저장해야 하는데, 저장하려면
+ * `file`이 있어야 하고, `file`을 얻으려면 id가 있어야 한다"가 된다.
+ *
+ * id를 만드는 데는 아무것도 읽거나 쓸 필요가 없다. 그래서 호출자가 먼저 id를 쥐고 그 키로
+ * 올린 뒤 한 번만 저장한다 — 2단계 upsert가 필요 없고, 업로드가 실패해도 반쯤 저장된 항목이
+ * 남지 않는다.
+ *
+ * 무작위다. 결정적 id(`<ownerId>:<keyword>`)로 하면 같은 사람이 같은 키워드를 다시 올릴 때
+ * 이전 그림을 덮는다.
+ */
+export function newClipartId(): string {
+  return `clipart_${randomUUID()}`;
+}
+
 /** 그 수강생이 올린 것만 돌려준다. 소유자가 빈 값이면 아무것도 주지 않는다(전부가 아니라). */
 export async function listStudentClipart(ownerId: string): Promise<ClipartEntry[]> {
   if (!ownerId) return [];
@@ -25,18 +44,20 @@ export async function listStudentClipart(ownerId: string): Promise<ClipartEntry[
 }
 
 /**
- * 수강생 업로드를 저장한다. `id`와 `source`는 호출자가 정하지 않는다 —
- * `source`를 밖에서 받으면 업로드가 `preset`으로 들어와 렌더가 프리셋 디렉터리에서 원본을
- * 찾다 실패하고(`ClipartEntry.source` 주석), `id`를 밖에서 받으면 두 사람이 같은 id를 써
- * `clipartAssetKey`가 같은 자리를 내주게 된다.
+ * 수강생 업로드를 저장한다. `id`는 호출자가 `newClipartId()`로 미리 만들어 넘긴다 —
+ * 그림을 이미 그 id로 계산한 자리에 올려 뒀기 때문이다(위 `newClipartId` 주석).
  *
- * 뒤에 붙인다(앞이 아니라). `matchClipart`는 길이가 같으면 앞선 항목을 고르므로, 새 업로드가
- * 앞으로 끼어들면 이미 잘 나오던 대본이 다른 그림을 내기 시작한다.
+ * **`source`만은 호출자가 정하지 못한다.** 업로드가 `preset`으로 들어오면 렌더는 원본을
+ * 프리셋 디렉터리에서 찾다 실패하고 그림이 조용히 사라진다(`ClipartEntry.source` 주석).
+ * 여기서 오는 것은 정의상 수강생 업로드다.
+ *
+ * 뒤에 붙인다(앞이 아니라). `matchClipart`는 term 길이가 같으면 앞선 항목을 고르므로,
+ * 새 업로드가 앞으로 끼어들면 이미 잘 나오던 대본이 다른 그림을 내기 시작한다.
  */
 export async function addStudentClipart(
-  entry: Omit<ClipartEntry, 'id' | 'source'>,
+  entry: Omit<ClipartEntry, 'source'>,
 ): Promise<ClipartEntry> {
-  const saved: ClipartEntry = { ...entry, id: `clipart_${randomUUID()}`, source: 'student' };
+  const saved: ClipartEntry = { ...entry, source: 'student' };
   await store.write(KEY, [...(await readAll()), saved]);
   return saved;
 }

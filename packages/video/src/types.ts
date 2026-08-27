@@ -4,17 +4,63 @@ export interface SubtitleSegment {
 }
 export type SubtitleJSON = SubtitleSegment[];
 
-export interface TitleCardScene {
-  type: 'title_card';
+export interface SceneBase {
   startTime: number;
   endTime: number;
-  title: string;
-  subtitle?: string;
   colorAccent?: string;
   /** 이 씬에만 적용할 배경. 없으면 ReelProps.backgroundImageUrl을 쓴다 */
   backgroundImageUrl?: string;
+  /** 계획 2b가 채운다. public 루트 기준 상대 경로 — 절대 파일 경로는 렌더러가 받지 못한다 */
+  characterImageUrl?: string;
 }
-export type SceneDirective = TitleCardScene;
+
+export interface TitleCardScene extends SceneBase {
+  type: 'title_card';
+  title: string;
+  subtitle?: string;
+}
+
+export interface ContentSlideScene extends SceneBase {
+  type: 'content_slide';
+  heading: string;
+  bullets: string[];
+}
+
+export interface EmphasisScene extends SceneBase {
+  type: 'emphasis';
+  keyword: string;
+  context?: string;
+}
+
+export interface ListRevealScene extends SceneBase {
+  type: 'list_reveal';
+  title: string;
+  items: string[];
+}
+
+export interface QuoteScene extends SceneBase {
+  type: 'quote';
+  quote: string;
+  author?: string;
+}
+
+export interface ConclusionScene extends SceneBase {
+  type: 'conclusion';
+  heading: string;
+  callToAction?: string;
+}
+
+export type SceneDirective =
+  | TitleCardScene
+  | ContentSlideScene
+  | EmphasisScene
+  | ListRevealScene
+  | QuoteScene
+  | ConclusionScene;
+
+export const SCENE_TYPES = [
+  'title_card', 'content_slide', 'emphasis', 'list_reveal', 'quote', 'conclusion',
+] as const satisfies readonly SceneDirective['type'][];
 
 export interface Palette {
   accent: string;

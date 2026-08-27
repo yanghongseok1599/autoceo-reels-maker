@@ -43,6 +43,10 @@ export const TitleCard: React.FC<{ scene: TitleCardScene; palette: Palette }> = 
         position: 'relative',
         fontSize: 72, fontWeight: 900, fontFamily: "'Pretendard', sans-serif",
         color: palette.ink, textAlign: 'center', maxWidth: 920, lineHeight: 1.2, padding: '0 60px',
+        // 한국어 기본 줄바꿈은 음절 단위라 넘치지는 않지만 어절 한가운데를 끊는다
+        // (`알려 드` / `릴게요.`). 릴스에서 가장 오래 보이는 첫 프레임이라 형제 컴포넌트와
+        // 같은 규칙을 쓴다: 어절은 붙여 두고, 한 어절이 줄보다 길 때만 쪼갠다.
+        wordBreak: 'keep-all', overflowWrap: 'break-word',
         transform: `scale(${interpolate(titleSpring, [0, 1], [0.8, 1])})`,
         textShadow: `0 4px 40px ${accent}60, 0 2px 8px ${palette.paper}cc`,
       }}>{scene.title}</div>
@@ -52,6 +56,9 @@ export const TitleCard: React.FC<{ scene: TitleCardScene; palette: Palette }> = 
           position: 'relative',
           fontSize: 32, fontWeight: 500, fontFamily: "'Pretendard', sans-serif",
           color: `${accent}cc`, textAlign: 'center', maxWidth: 860, lineHeight: 1.4,
+          // 제목과 같은 규칙이다. 이 줄은 오래 비어 있었지만 이제 넘친 꼬리가 들어온다 —
+          // keep-all이 없으면 `알려 드`/`릴게요.` 가 둘째 줄로 자리만 옮겨 되살아난다.
+          wordBreak: 'keep-all', overflowWrap: 'break-word',
           opacity: subOpacity, transform: `translateY(${subY}px)`,
         }}>{scene.subtitle}</div>
       )}

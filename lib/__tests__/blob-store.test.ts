@@ -56,14 +56,40 @@ describe('blobStore.read', () => {
     expect(value).toEqual([{ id: 'job1', status: 'completed' }]);
   });
 
+  /**
+   * SDK가 `null`을 주는 경우는 404 하나뿐이다(`dist/index.js`의 `get`). 아직 아무도 쓰지 않은
+   * 키는 오류가 아니라 매 요청마다 일어나는 정상이므로, **이것만** fallback을 받는다.
+   */
   it('falls back when the blob does not exist yet', async () => {
     get.mockResolvedValue(null);
     expect(await (await blobStore()).read('jobs', ['fallback'])).toEqual(['fallback']);
   });
 
-  it('falls back instead of throwing when the store errors', async () => {
+  /**
+   * 예전에는 여기서도 fallback을 돌려줬다. 그건 저장소가 잠깐 죽은 것을 "값이 없다"로
+   * 바꿔 놓는 것이라, 수강생에게는 자기 목소리·클립아트가 사라진 것처럼 보이고 고쳐야 할
+   * 사람에게는 아무 단서도 남지 않았다. 파일 구현이 `ENOENT`가 아닌 오류를 던지는 것과
+   * 같은 규칙이다 — 두 구현이 여기서 갈리면 한쪽에서만 조용히 틀린다.
+   */
+  it('throws instead of reading a store outage as "no data"', async () => {
     get.mockRejectedValue(new Error('network'));
-    expect(await (await blobStore()).read('jobs', ['fallback'])).toEqual(['fallback']);
+    await expect((await blobStore()).read('jobs', ['fallback'])).rejects.toThrow('network');
+  });
+
+  /**
+   * 깨진 JSON을 fallback으로 바꾸면 데이터 유실이 "비어 있음"과 구별되지 않는다.
+   * 파일 구현에서 `students.json`이 찢어졌을 때 전원이 로그인하지 못하게 만든 것이 이 삼킴이다.
+   */
+  it('throws instead of reading a corrupt blob as empty', async () => {
+    get.mockResolvedValue({
+      statusCode: 200 as const,
+      stream: new Response('[{"id":"u1"}]]').body,
+      headers: new Headers(),
+      blob: {},
+    });
+    await expect((await blobStore()).read('students', [])).rejects.toThrow(
+      '저장소 값이 깨져 읽을 수 없습니다: students',
+    );
   });
 });
 

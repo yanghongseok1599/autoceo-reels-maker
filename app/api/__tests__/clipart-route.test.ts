@@ -333,6 +333,88 @@ describe('POST /api/clipart', () => {
   });
 
   /**
+   * 한 글자 term 금지는 프리셋 로더에만 있으면 반쪽이다. Task 1 실측에서 현실적인 대본
+   * 14줄 중 12줄이 오검출했고 가장 큰 단일 원인이 한 글자 term이었다 — `준비 자세부터`가
+   * `비`에, `돈다면`이 `돈`에 걸렸다. 그 규칙이 운영자 카탈로그에만 걸려 있으면 수강생은
+   * 자기 카탈로그에서 똑같은 고장을 그대로 다시 겪는다.
+   */
+  it('rejects a one-character keyword, the largest measured cause of false matches', async () => {
+    const res = await POST(req('POST', 'u1', form('비')));
+    expect(res.status).toBe(400);
+    expect(await listStudentClipart('u1')).toEqual([]);
+  });
+
+  // 별칭도 `matchClipart`가 똑같이 쓰는 term이다. 하나만 한 글자여도 결과는 같다.
+  it('rejects a one-character alias too, since matching uses aliases the same way', async () => {
+    const fd = form('기쁨');
+    fd.set('aliases', '행복,비');
+    const res = await POST(req('POST', 'u1', fd));
+    expect(res.status).toBe(400);
+    expect(await listStudentClipart('u1')).toEqual([]);
+  });
+
+  /**
+   * 조용히 솎아 내지 않는다. 프리셋 로더는 그렇게 해도 되지만(운영자 자신의 카탈로그다),
+   * 수강생 업로드를 조용히 버리면 "비슷한 말을 넣었는데 안 먹는다"가 되고 이유가 화면
+   * 어디에도 없다.
+   */
+  it('rejects rather than silently dropping the short alias', async () => {
+    const fd = form('기쁨');
+    fd.set('aliases', '행복,비');
+    await POST(req('POST', 'u1', fd));
+    expect(await listStudentClipart('u1')).toEqual([]);
+  });
+
+  /**
+   * 거절 문구는 규칙이 아니라 **원리**를 가르쳐야 한다. `두 글자 이상 쓰세요`만 읽은 수강생은
+   * 임의의 제약으로 이해하고 아무 글자나 덧붙인다. 위험은 반대쪽이다 — 한 글자 낱말이
+   * 상관없는 장면마다 캐릭터를 불러낸다는 사실을 알아야 제대로 된 낱말을 고른다.
+   */
+  it('says why a one-character term is refused, not merely that it is', async () => {
+    const body = await (await POST(req('POST', 'u1', form('비')))).json();
+    expect(body.error).toContain('"비"');           // 무엇이 문제인지
+    expect(body.error).toContain('다른 낱말 안에');   // 왜 문제인지
+    expect(body.error).toContain('준비');            // 실측 예
+    expect(body.error).toContain('2글자 이상');       // 무엇을 하면 되는지
+  });
+
+  // 두 자리의 거절은 어느 칸을 고쳐야 하는지 서로 달라야 한다.
+  it('names the field it refused, so the student knows which box to fix', async () => {
+    const byKeyword = await (await POST(req('POST', 'u1', form('비')))).json();
+    const fd = form('기쁨');
+    fd.set('aliases', '비');
+    const byAlias = await (await POST(req('POST', 'u1', fd))).json();
+    expect(byKeyword.error).toContain('키워드');
+    expect(byAlias.error).toContain('비슷한 말');
+  });
+
+  it('accepts a two-character keyword — the rule is a floor, not a ban on short words', async () => {
+    expect((await POST(req('POST', 'u1', form('기쁨')))).status).toBe(200);
+  });
+
+  /**
+   * 같은 키워드를 다시 올리는 것은 **고치는 행위다.** 덧붙이면 같은 키워드 항목이 둘 남고
+   * `matchClipart`는 동점일 때 앞선 항목을 고르므로 새 그림이 절대 이기지 못한다 —
+   * 수강생 눈에는 "다시 올렸는데 안 바뀐다"가 되고, 잘못 고른 키워드를 고칠 길이 막힌다.
+   */
+  it('replaces the character when the same keyword is uploaded again', async () => {
+    await POST(req('POST', 'u1', form('기쁨', blob(png(6), 'image/png'))));
+    const [first] = await listStudentClipart('u1');
+
+    await POST(req('POST', 'u1', form('기쁨', blob(png(4), 'image/png'))));
+    const mine = await listStudentClipart('u1');
+
+    expect(mine).toHaveLength(1);
+    // 새 id → 새 자리. 옛 그림을 덮지 않으므로 진행 중인 렌더가 가져가는 파일이 바뀌지 않는다.
+    expect(mine[0].id).not.toBe(first.id);
+    expect(mine[0].file).not.toBe(first.file);
+    expect(mine[0].file).toBe(clipartAssetKey(mine[0]));
+    expect(existsSync(path.join(publicDir, mine[0].file))).toBe(true);
+    // 지우는 게 아니다 — 옛 그림은 그대로 남는다. 없는 파일을 가리키는 렌더가 생기지 않는다.
+    expect(existsSync(path.join(publicDir, first.file))).toBe(true);
+  });
+
+  /**
    * 업로드가 실패하면 아무것도 남지 않아야 한다. 항목만 저장되고 그림이 없으면 그 수강생의
    * 카탈로그는 프리셋으로 되돌아가지도 못한 채(자기 것이 하나 있으니) 그림 없는 씬만 낸다.
    *

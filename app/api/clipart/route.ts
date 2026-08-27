@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { readSessionFromRequest } from '@/lib/auth';
-import { clipartAssetKey } from '@/lib/clipart';
+import { MIN_TERM_LENGTH, clipartAssetKey } from '@/lib/clipart';
 import { addStudentClipart, catalogFor, newClipartId } from '@/lib/clipart-store';
 import { selectArtifactStore } from '@/lib/store';
 
@@ -116,6 +116,25 @@ function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
 }
 
+/**
+ * 한 글자 term 거절 문구.
+ *
+ * **왜 거르지 않고 거절하는가**: 프리셋 로더는 한 글자 별칭을 조용히 솎아 낸다
+ * (`lib/clipart-preset.ts`) — 그건 운영자 자신의 카탈로그라 손질이고, 운영자는 그 규칙을
+ * 안다. 수강생 업로드는 다르다. 조용히 버리면 "비슷한 말을 넣었는데 안 먹는다"가 되고,
+ * 안 먹는 이유가 화면 어디에도 없다.
+ *
+ * **왜 이유를 적는가**: `두 글자 이상 입력하세요`만 읽은 수강생은 규칙을 임의의 제약으로
+ * 이해하고 아무 글자나 덧붙인다. 실제 위험은 그 반대쪽이다 — 한 글자 낱말은 상관없는 장면마다
+ * 캐릭터를 불러내고, 수강생은 자기가 고른 키워드와 그 고장을 연결하지 못한다. 실측 예를
+ * 그대로 적어 두면 규칙이 아니라 원리가 전달된다.
+ */
+function tooShortTerm(subject: string, term: string, fix: string) {
+  return `${subject} 한 글자입니다: "${term}". 한 글자 낱말은 다른 낱말 안에 그대로 들어 있어서`
+    + ' 상관없는 장면에도 이 캐릭터가 나옵니다 — "비"는 준비·대비·비타민에, "돈"은 돈다면에'
+    + ` 걸립니다. ${MIN_TERM_LENGTH}글자 이상으로 ${fix}.`;
+}
+
 /** 이 수강생의 캐릭터 목록. 세션이 없으면 "누구 것"을 정할 수 없으므로 목록도 없다. */
 export async function GET(request: Request) {
   const ownerId = readSessionFromRequest(request);
@@ -164,6 +183,25 @@ export async function POST(request: Request) {
   // 키워드가 없는 항목은 어떤 대본에도 매칭될 수 없다. 저장해 봐야 목록만 채우는 죽은 줄이다.
   if (!keyword) {
     return badRequest('캐릭터를 찾을 키워드가 필요합니다.');
+  }
+
+  /**
+   * 한 글자 term은 저장하지 않는다. 프리셋 카탈로그가 이 규칙으로 실측 오검출을 몰아냈는데
+   * (`MIN_TERM_LENGTH` 주석: `비` ⊂ 준비·대비, `돈` ⊂ 돈다면), 그 검사가 프리셋 로더에만
+   * 걸려 있으면 수강생은 자기 카탈로그에서 똑같은 고장을 그대로 다시 겪는다. 게다가 그때는
+   * 자기가 고른 낱말이 원인이라는 걸 짐작할 방법이 없다 — 릴스 전체에 엉뚱한 캐릭터가 나오는데
+   * 화면 어디에도 이유가 없다.
+   *
+   * 키워드와 별칭 **둘 다** 본다. 별칭도 `matchClipart`가 똑같이 쓰는 term이라, 별칭 하나만
+   * 한 글자여도 결과는 같다.
+   */
+  if (keyword.length < MIN_TERM_LENGTH) {
+    return badRequest(tooShortTerm('키워드가', keyword, '적어 주세요'));
+  }
+
+  const shortAlias = aliases.find((alias) => alias.length < MIN_TERM_LENGTH);
+  if (shortAlias) {
+    return badRequest(tooShortTerm('비슷한 말이', shortAlias, '적거나 지워 주세요'));
   }
 
   if (!(image instanceof Blob) || image.size === 0) {

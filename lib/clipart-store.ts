@@ -51,14 +51,37 @@ export async function listStudentClipart(ownerId: string): Promise<ClipartEntry[
  * 프리셋 디렉터리에서 찾다 실패하고 그림이 조용히 사라진다(`ClipartEntry.source` 주석).
  * 여기서 오는 것은 정의상 수강생 업로드다.
  *
- * 뒤에 붙인다(앞이 아니라). `matchClipart`는 term 길이가 같으면 앞선 항목을 고르므로,
- * 새 업로드가 앞으로 끼어들면 이미 잘 나오던 대본이 다른 그림을 내기 시작한다.
+ * **같은 소유자가 같은 키워드를 다시 올리면 덧붙이지 않고 갈아 끼운다.**
+ *
+ * 덧붙이면 같은 키워드를 가진 항목이 둘 남고, `matchClipart`는 term 길이가 같을 때 앞선
+ * 항목을 고르므로 **새로 올린 그림이 절대 이기지 못한다.** 수강생 눈에는 "다시 올렸는데
+ * 아무것도 안 바뀐다"로 보인다 — 원인을 짐작할 단서가 화면 어디에도 없고, 잘못된 키워드를
+ * 고칠 유일한 방법이 막힌다. 없는 기능보다 나쁘다: 앱이 고장 났다고 가르치는 쪽이다.
+ *
+ * **id는 새것이다**(호출자가 이미 새로 만들어 넘겼다). 이 점이 중요하다 —
+ * `clipartAssetKey`는 id를 해싱하므로 새 id면 새 그림이 **새 자리**에 올라가고, 옛 그림은
+ * 아무도 안 보는 채로 남는다. id를 재사용해 같은 자리를 덮으면 지금 진행 중인 렌더가
+ * 가져가는 중인 파일을 갈아 끼우게 된다. 버려진 blob은 무해하지만 바뀌는 blob은 아니다.
+ *
+ * 지우는 게 아니다. 항목 수는 그대로이고, 어떤 렌더도 없는 파일을 가리키게 되지 않는다.
+ *
+ * **자리를 지킨다**(빼고 뒤에 붙이지 않는다). `matchClipart`는 동점일 때 앞선 항목을 고르므로
+ * 순서가 바뀌면 이 항목과 무관한 다른 대본의 결과까지 흔들린다. 갈아 끼우는 건 그림이지
+ * 카탈로그 순서가 아니다.
+ *
+ * 새 키워드는 뒤에 붙인다(앞이 아니라). 같은 이유다 — 새 업로드가 앞으로 끼어들면 이미 잘
+ * 나오던 대본이 다른 그림을 내기 시작한다.
  */
 export async function addStudentClipart(
   entry: Omit<ClipartEntry, 'source'>,
 ): Promise<ClipartEntry> {
   const saved: ClipartEntry = { ...entry, source: 'student' };
-  await store.write(KEY, [...(await readAll()), saved]);
+  const all = await readAll();
+  // 소유자까지 함께 본다. 키워드만 보면 수강생 A가 `기쁨`을 올릴 때 B의 `기쁨`이 사라진다.
+  const at = all.findIndex((e) => e.ownerId === saved.ownerId && e.keyword === saved.keyword);
+
+  const next = at >= 0 ? all.map((e, i) => (i === at ? saved : e)) : [...all, saved];
+  await store.write(KEY, next);
   return saved;
 }
 

@@ -190,6 +190,7 @@ export default function Home() {
   const [characterAliases, setCharacterAliases] = useState("");
   const [characterCategory, setCharacterCategory] = useState("");
   const [characterUploadStatus, setCharacterUploadStatus] = useState<ClipartUploadStatus>("idle");
+  const [characterDoneMessage, setCharacterDoneMessage] = useState("");
   const [characterError, setCharacterError] = useState("");
   const [learningRecordId, setLearningRecordId] = useState("");
   const [learningInsights, setLearningInsights] = useState<LearningInsights | null>(null);
@@ -460,6 +461,7 @@ export default function Home() {
     setCharacterFile(file);
     setCharacterFileName(file.name);
     setCharacterUploadStatus("idle");
+    setCharacterDoneMessage("");
     setCharacterError("");
   }
 
@@ -475,6 +477,7 @@ export default function Home() {
     }
 
     setCharacterUploadStatus("uploading");
+    setCharacterDoneMessage("");
     setCharacterError("");
 
     const formData = new FormData();
@@ -502,8 +505,28 @@ export default function Home() {
 
       // 내 것이 하나라도 생기면 프리셋은 더 이상 쓰이지 않는다(`catalogFor`). 방금 저장에
       // 성공했으므로 그 사실은 여기서 이미 확정이고, 이어지는 재조회가 실패해도 안내는 내려간다.
-      setClipartEntries([data.entry as ClipartEntrySummary]);
+      const entry = data.entry as ClipartEntrySummary;
+      const replaced = myCharacters.some((existing) => existing.keyword === entry.keyword);
+
+      // 목록도 `addStudentClipart`와 같은 규칙으로 맞춘다: 같은 키워드는 갈아 끼우고, 새 키워드는
+      // 뒤에 붙인다. 통째로 `[entry]`로 갈면 캐릭터가 여럿인 수강생의 목록이 잠깐 하나로 줄고,
+      // 뒤따르는 재조회가 실패하면 그 잘못된 목록이 그대로 남는다. 진실은 여전히 서버에 있고
+      // 바로 아래에서 다시 읽는다 — 여기 계산은 그 사이를 메우는 값일 뿐이다.
+      setClipartEntries(() => {
+        const mine = usingPresetCharacter ? [] : clipartEntries;
+        const at = mine.findIndex((existing) => existing.keyword === entry.keyword);
+        return at >= 0 ? mine.map((existing, i) => (i === at ? entry : existing)) : [...mine, entry];
+      });
       setUsingPresetCharacter(false);
+      setCharacterDoneMessage(
+        replaced
+          // 갈아 끼웠다는 걸 말해 준다. 이 화면이 없으면 수강생은 같은 키워드를 다시 올린 뒤
+          // 목록 길이가 그대로인 것을 보고 "안 올라갔나?" 하고 또 올린다.
+          // 그림만이 아니라 항목 전체가 바뀐다는 것도 같이 말한다. 이 폼이 곧 저장되는 내용이라,
+          // 비슷한 말을 비워 둔 채 다시 올리면 전에 적어 둔 별칭이 함께 사라진다.
+          ? `"${entry.keyword}" 캐릭터를 방금 올린 그림으로 바꿨습니다. 비슷한 말·분류도 지금 적은 값으로 덮어씁니다.`
+          : "캐릭터를 저장했습니다. 이제부터 내 캐릭터가 들어갑니다.",
+      );
       setCharacterUploadStatus("done");
       setCharacterFile(null);
       setCharacterFileName("");
@@ -1398,7 +1421,7 @@ export default function Home() {
               </label>
               <p className="characterHint">
                 대본에 이 낱말이 나오는 장면에 이 캐릭터가 들어갑니다. 대본에서 실제로 쓰는
-                낱말로, 두 글자 이상 적어주세요 — 한 글자는 다른 낱말 속에 우연히 걸립니다.
+                낱말로, 2글자 이상 적어주세요 — 한 글자는 다른 낱말 속에 우연히 걸립니다.
               </p>
 
               <label className="characterField">
@@ -1431,10 +1454,8 @@ export default function Home() {
               {characterError && (
                 <p className="characterError" role="alert">{characterError}</p>
               )}
-              {characterUploadStatus === "done" && !characterError && (
-                <p className="characterDone" role="status">
-                  캐릭터를 저장했습니다. 이제부터 내 캐릭터가 들어갑니다.
-                </p>
+              {characterUploadStatus === "done" && !characterError && characterDoneMessage && (
+                <p className="characterDone" role="status">{characterDoneMessage}</p>
               )}
             </div>
           </section>

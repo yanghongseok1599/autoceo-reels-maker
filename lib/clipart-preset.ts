@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { ClipartEntry } from './clipart';
+import { MIN_TERM_LENGTH, type ClipartEntry } from './clipart';
 
 /**
  * 프리셋 항목의 `ownerId`. 사람이 아니라 자리표시자다 — "아무 수강생의 것도 아니다"라는 뜻이다.
@@ -26,24 +26,6 @@ export function presetDir(): string {
   return process.env.CLIPART_PRESET_DIR
     ?? path.join(os.homedir(), '.codex', 'skills', 'character-clipart-library');
 }
-
-/**
- * term(키워드·별칭)의 최소 길이. **낮추지 말 것.**
- *
- * 한국어는 교착어라 `걱정합니다`를 잡으려면 부분 일치가 필수인데, 바로 그래서 낱말 경계를
- * 요구할 수가 없다(`lib/clipart.ts` 주석). 그 결과 한 글자 term은 아무 문장 조각에나 걸린다.
- * 실측 카탈로그의 한 글자 term은 `돈 비 밤 쉿 예 끝` 여섯 개이고, 실제 대본에서 이렇게 걸렸다:
- * `비` ⊂ 준비·대비·비타민, `예` ⊂ 예방·예를, `돈` ⊂ 돈다면.
- * 긴 일치 우선으로는 못 막는다 — 경쟁할 더 긴 term이 카탈로그에 아예 없기 때문이다.
- *
- * 이건 이 카탈로그의 사정이 아니라 일반 규칙이다. 어떤 카탈로그가 오든 한 글자 term은
- * 우연히 걸릴 확률이 실용 가치보다 크다.
- *
- * 판단의 근거는 비대칭이다: **빠진 캐릭터는 아무도 눈치채지 못하지만, 스쿼트 설명에 붙은
- * 비 오는 캐릭터는 수강생이 자기 이름으로 발행한 릴스에 박힌 버그로 보인다.** 그래서
- * 재현율이 아니라 정밀도 쪽으로 세게 기운다.
- */
-const MIN_TERM_LENGTH = 2;
 
 /**
  * 프리셋에서 솎아 내는 별칭. **되돌리지 말 것** — 아래가 실측에서 오검출한 원인이고,
@@ -91,7 +73,13 @@ type RawItem = {
   status?: unknown;
 };
 
-/** 매칭에 쓸 수 있는 term인가. 공백만 남는 문자열과 한 글자 term을 여기서 다 막는다. */
+/**
+ * 매칭에 쓸 수 있는 term인가. 공백만 남는 문자열과 한 글자 term을 여기서 다 막는다.
+ *
+ * `MIN_TERM_LENGTH`는 `lib/clipart.ts`에 산다 — 이 카탈로그만의 규칙이 아니라 매칭 방식
+ * 자체의 조건이고, 수강생 업로드 라우트(`app/api/clipart/route.ts`)도 같은 값을 써야 한다.
+ * 이유는 그쪽 주석에 적어 뒀다.
+ */
 function usableTerm(term: unknown): term is string {
   return typeof term === 'string' && term.trim().length >= MIN_TERM_LENGTH;
 }

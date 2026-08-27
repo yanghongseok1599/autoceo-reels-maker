@@ -125,6 +125,66 @@ describe('clipart ownership – 경계', () => {
   });
 });
 
+/**
+ * 같은 키워드를 다시 올리는 것은 **고치는 행위다.** 덧붙이면 같은 키워드 항목이 둘 남고,
+ * `matchClipart`는 동점일 때 앞선 항목을 고르므로 새 그림이 절대 이기지 못한다 — 수강생
+ * 눈에는 "다시 올렸는데 안 바뀐다"가 되고 잘못된 키워드를 고칠 길이 막힌다.
+ */
+describe('addStudentClipart – 같은 키워드 다시 올리기', () => {
+  it('replaces the entry instead of adding a second one with the same keyword', async () => {
+    await addStudentClipart(upload('u1', '기쁨', 'clipart/old.png'));
+    await addStudentClipart(upload('u1', '기쁨', 'clipart/new.png'));
+
+    const mine = await listStudentClipart('u1');
+    expect(mine).toHaveLength(1);
+    expect(mine[0].file).toBe('clipart/new.png');
+  });
+
+  /**
+   * id는 새것이어야 한다. `clipartAssetKey`가 id를 해싱하므로 새 id면 새 그림이 **새 자리**에
+   * 올라가고 옛 그림은 아무도 안 보는 채로 남는다. id를 재사용해 같은 자리를 덮으면 지금
+   * 진행 중인 렌더가 가져가는 중인 파일을 갈아 끼우게 된다.
+   */
+  it('carries the new id, so the new image lives at a new key and no in-flight render is mutated', async () => {
+    const first = upload('u1', '기쁨', 'clipart/old.png');
+    const second = upload('u1', '기쁨', 'clipart/new.png');
+    expect(second.id).not.toBe(first.id);
+
+    await addStudentClipart(first);
+    await addStudentClipart(second);
+
+    expect((await listStudentClipart('u1'))[0].id).toBe(second.id);
+  });
+
+  // 소유자까지 함께 봐야 한다. 키워드만 보면 u1이 `기쁨`을 올릴 때 u2의 `기쁨`이 사라진다.
+  it("never replaces another student's entry that happens to share the keyword", async () => {
+    await addStudentClipart(upload('u2', '기쁨', 'clipart/theirs.png'));
+    await addStudentClipart(upload('u1', '기쁨', 'clipart/mine.png'));
+
+    expect((await listStudentClipart('u2')).map((e) => e.file)).toEqual(['clipart/theirs.png']);
+    expect((await listStudentClipart('u1')).map((e) => e.file)).toEqual(['clipart/mine.png']);
+  });
+
+  /**
+   * 자리를 지킨다. `matchClipart`는 동점일 때 앞선 항목을 고르므로, 갈아 끼우며 뒤로 밀면
+   * 이 항목과 무관한 다른 대본의 결과까지 흔들린다. 갈아 끼우는 건 그림이지 순서가 아니다.
+   */
+  it('keeps the entry in place rather than moving it to the end', async () => {
+    await addStudentClipart(upload('u1', '기쁨', 'clipart/a.png'));
+    await addStudentClipart(upload('u1', '슬픔', 'clipart/b.png'));
+    await addStudentClipart(upload('u1', '기쁨', 'clipart/a2.png'));
+
+    expect((await listStudentClipart('u1')).map((e) => e.keyword)).toEqual(['기쁨', '슬픔']);
+  });
+
+  // 다른 키워드는 여전히 덧붙는다. 갈아 끼우기가 "하나만 가질 수 있다"가 되면 안 된다.
+  it('still appends when the keyword is new', async () => {
+    await addStudentClipart(upload('u1', '기쁨', 'clipart/a.png'));
+    await addStudentClipart(upload('u1', '슬픔', 'clipart/b.png'));
+    expect(await listStudentClipart('u1')).toHaveLength(2);
+  });
+});
+
 describe('addStudentClipart – 호출자가 정하는 것과 정하지 못하는 것', () => {
   it('stores the caller minted id unchanged', async () => {
     // 라우트는 이 id로 계산한 자리에 그림을 이미 올려 뒀다. 저장하며 바꾸면 그림을 잃는다.

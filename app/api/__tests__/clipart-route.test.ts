@@ -109,20 +109,38 @@ describe('POST /api/clipart', () => {
   });
 
   /**
-   * PNG·JPG만 받는다. 이 라우트가 돌려주는 경로는 그대로 `<img>`와 Remotion `<Img>`에 들어간다.
+   * PNG만 받는다. 이 라우트가 돌려주는 경로는 그대로 `<img>`와 Remotion `<Img>`에 들어간다.
    * SVG나 임의 바이트를 통과시키면 렌더가 조용히 빈 그림을 내거나, 남의 브라우저에서 실행되는
    * 마크업을 그 수강생 이름으로 서빙하게 된다.
    */
-  it('rejects a file that is not a png or jpeg', async () => {
+  it('rejects a file that is not a png', async () => {
     const gif = new Blob(['GIF89a'], { type: 'image/gif' });
     const res = await POST(req('POST', 'u1', form('기쁨', gif)));
     expect(res.status).toBe(400);
     expect(await listStudentClipart('u1')).toEqual([]);
   });
 
-  it('accepts a jpeg as well as a png', async () => {
+  /**
+   * JPEG는 **형식 취향의 문제가 아니다.** 캐릭터는 이미 그려진 씬 위에 얹히는데 JPEG에는
+   * 알파 채널이 없다. 통과시키면 수강생의 릴스에 불투명한 흰 사각형이 박힌 채로 나가고,
+   * 200을 받은 수강생은 왜 그런지 알 방법이 없다. 올바른 결과를 낼 수 없는 형식은 받지 않는다.
+   */
+  it('rejects a jpeg because a character with no alpha channel lands as a white box', async () => {
     const jpeg = new Blob(['JPEGDATA'], { type: 'image/jpeg' });
-    expect((await POST(req('POST', 'u1', form('기쁨', jpeg)))).status).toBe(200);
+    const res = await POST(req('POST', 'u1', form('기쁨', jpeg)));
+    expect(res.status).toBe(400);
+    expect(await listStudentClipart('u1')).toEqual([]);
+  });
+
+  /**
+   * 거절 문구는 제약을 **가르쳐야** 한다. "PNG만 됩니다"만 읽은 수강생은 JPG를 PNG로 변환해
+   * 다시 올리고 여전히 흰 네모를 얻는다 — 변환은 없던 투명 배경을 만들어 내지 못한다.
+   */
+  it('tells the student the background must be transparent, not merely that it must be a png', async () => {
+    const jpeg = new Blob(['JPEGDATA'], { type: 'image/jpeg' });
+    const body = await (await POST(req('POST', 'u1', form('기쁨', jpeg)))).json();
+    expect(body.error).toContain('투명');
+    expect(body.error).toContain('PNG');
   });
 
   /**

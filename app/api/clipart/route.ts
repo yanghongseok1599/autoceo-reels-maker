@@ -9,8 +9,18 @@ import { selectArtifactStore } from '@/lib/store';
 
 export const dynamic = 'force-dynamic';
 
-/** `<img>`와 Remotion `<Img>`가 그대로 그릴 수 있는 것만 받는다. */
-const ALLOWED_TYPES = new Set(['image/png', 'image/jpeg']);
+/**
+ * **PNG만 받는다.** 확장자 취향이 아니라 알파 채널 때문이다.
+ *
+ * 캐릭터는 이미 그려진 씬 **위에 얹힌다.** JPEG에는 투명도가 없으므로 JPG로 올린 캐릭터는
+ * 영상 위에 불투명한 사각형으로 앉는다 — 조금 흐려지는 정도가 아니라 눈에 띄게 망가진
+ * 영상이고, 수강생은 왜 그런지 알 방법이 없다. 올바른 결과를 낼 수 없는 형식을 받아 주는 건
+ * 친절이 아니다. 운영자 프리셋 라이브러리의 그림이 전부 RGBA PNG인 이유도 같다.
+ *
+ * 이 결정이 `clipartAssetKey`가 확장자를 `.png`로 고정하는 것과 짝이다(`lib/clipart.ts`).
+ * 한쪽만 되돌리면 확장자와 내용이 어긋난다.
+ */
+const ALLOWED_TYPES = new Set(['image/png']);
 
 /**
  * 업로드 상한. 두 가지가 이 숫자를 정했다.
@@ -106,7 +116,13 @@ export async function POST(request: Request) {
   }
 
   if (!ALLOWED_TYPES.has(image.type)) {
-    return badRequest('PNG 또는 JPG 이미지만 올릴 수 있습니다.');
+    // 무엇이 안 되는지가 아니라 **왜 안 되는지**를 말한다. "PNG만 됩니다"만 읽은 수강생은
+    // JPG를 PNG로 변환해 다시 올리고 여전히 흰 네모를 얻는다. 배경이 투명해야 한다는 걸
+    // 알아야 내보내기부터 다시 한다.
+    return badRequest(
+      '캐릭터 그림은 배경이 투명한 PNG여야 합니다. JPG처럼 투명 배경을 담지 못하는 형식으로 올리면'
+      + ' 캐릭터가 영상 위에 흰 네모로 얹혀 보입니다.',
+    );
   }
 
   if (image.size > MAX_UPLOAD_BYTES) {

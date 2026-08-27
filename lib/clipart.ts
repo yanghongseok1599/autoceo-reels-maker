@@ -72,6 +72,11 @@ export function matchClipart(text: string, catalog: ClipartEntry[]): ClipartEntr
  *
  * 해시의 재료는 `file`이 아니라 `id`다. 같은 프리셋 그림을 여러 항목이 가리켜도 자리가
  * 갈려야 하고, 무엇보다 소유자가 다른 두 항목이 같은 자리를 쓰면 안 된다.
+ *
+ * 확장자를 `.png`로 고정해도 되는 이유: 업로드 라우트가 **PNG만 받는다**
+ * (`app/api/clipart/route.ts`의 `ALLOWED_TYPES`). 캐릭터는 씬 위에 얹히므로 투명 배경이
+ * 필요하고, JPEG에는 알파 채널이 없다. 다른 형식을 받게 바꾸면 여기 확장자도 같이 바꿔야
+ * 한다 — 한쪽만 손대면 확장자와 실제 내용이 어긋난다.
  */
 export function clipartAssetKey(entry: ClipartEntry): string {
   return `clipart/${createHash('sha1').update(entry.id).digest('hex').slice(0, 10)}.png`;

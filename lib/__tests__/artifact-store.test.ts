@@ -120,10 +120,11 @@ describe('blobArtifactStore.publish – contentType', () => {
     expect(url).toBe('https://blob.example/clipart/abc.png');
   });
 
-  it('passes a jpeg through as a jpeg', async () => {
+  // 저장소는 클립아트 전용이 아니다. 호출자가 준 값을 손대지 않고 그대로 넘기는지 본다.
+  it('forwards whatever type the caller names, unchanged', async () => {
     const { blobArtifactStore } = await import('../store/blob-artifact-store');
-    await blobArtifactStore.publish(source, 'clipart/abc.png', 'image/jpeg');
-    expect(optionsOfLastPut().contentType).toBe('image/jpeg');
+    await blobArtifactStore.publish(source, 'generated-audio/ab.mp3', 'audio/mpeg');
+    expect(optionsOfLastPut().contentType).toBe('audio/mpeg');
   });
 
   // 기본값이 있어야 렌더 워커(`worker/index.ts`)의 기존 호출을 건드리지 않는다.

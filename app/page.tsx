@@ -24,6 +24,24 @@ type VoiceProfileSummary = {
   sampleCount?: number;
 };
 
+/** `GET /api/clipart`가 돌려주는 한 항목(`lib/clipart.ts`의 `ClipartEntry`). */
+type ClipartEntrySummary = {
+  id: string;
+  keyword: string;
+  aliases: string[];
+  category: string;
+  source: "preset" | "student";
+  file: string;
+};
+
+type ClipartUploadStatus = "idle" | "uploading" | "done";
+
+/**
+ * 프리셋 목록에서 낱말 칩으로 보여 줄 개수. 실측 카탈로그가 114개라 전부 늘어놓으면
+ * 패널이 칩으로만 채워지고 정작 읽어야 할 안내가 밀려난다. 나머지는 개수로만 적는다.
+ */
+const PRESET_KEYWORD_PREVIEW_COUNT = 8;
+
 type LearningInsights = {
   total: number;
   completed: number;
@@ -66,6 +84,26 @@ function emptyUpload(): UploadState {
     status: "idle",
     error: "",
   };
+}
+
+/** 파일명에서 확장자를 뗀 부분. 키워드 기본값의 재료다. */
+function fileStem(name: string) {
+  return name.replace(/\.[^.]+$/, "").trim();
+}
+
+/**
+ * 수강생이 올린 캐릭터 그림의 브라우저 주소.
+ *
+ * `ArtifactStore.publish`의 반환값이 두 모양이다: 로컬은 `clipart/ab12.png`(앞 슬래시 없는
+ * public 루트 상대 경로), 배포(Blob)는 `https://...` 절대 URL. 상대 경로를 그대로 `src`에 넣으면
+ * 지금 보고 있는 경로 기준으로 풀려 404가 난다.
+ *
+ * **프리셋 항목에는 쓰지 않는다.** 프리셋의 `file`은 운영자 Codex 스킬 디렉터리 기준
+ * (`assets/clipart/걱정.png`)이고 그 디렉터리는 `public/` 밖이라 브라우저에서 열 방법이 아예 없다
+ * (`lib/clipart-preset.ts`의 `presetDir` 주석).
+ */
+function studentClipartSrc(file: string) {
+  return /^https?:\/\//.test(file) ? file : `/${file.replace(/^\/+/, "")}`;
 }
 
 function estimateTalkSeconds(script: string, speed: number) {
@@ -137,6 +175,22 @@ export default function Home() {
   const [voiceReferenceText, setVoiceReferenceText] = useState(starterVoiceReference);
   const [voiceboxStatus, setVoiceboxStatus] = useState<VoiceboxStatus>("checking");
   const [voiceInputMode, setVoiceInputMode] = useState<VoiceInputMode>("clone");
+  const [clipartEntries, setClipartEntries] = useState<ClipartEntrySummary[]>([]);
+  /**
+   * 지금 릴스에 들어가는 캐릭터가 **내 것이 아닌지**. 서버가 답을 준 경우에만 참이 된다.
+   *
+   * 조회에 실패했을 때 참으로 두지 않는 이유: 캐릭터를 이미 올린 수강생에게 "남의 캐릭터가
+   * 나갑니다"라고 말하는 것도 틀린 말이고, 한 번 틀린 안내는 다음에 진짜로 떴을 때도 무시된다.
+   * 모르면 아무 말도 하지 않는다.
+   */
+  const [usingPresetCharacter, setUsingPresetCharacter] = useState(false);
+  const [characterFile, setCharacterFile] = useState<File | null>(null);
+  const [characterFileName, setCharacterFileName] = useState("");
+  const [characterKeyword, setCharacterKeyword] = useState("");
+  const [characterAliases, setCharacterAliases] = useState("");
+  const [characterCategory, setCharacterCategory] = useState("");
+  const [characterUploadStatus, setCharacterUploadStatus] = useState<ClipartUploadStatus>("idle");
+  const [characterError, setCharacterError] = useState("");
   const [learningRecordId, setLearningRecordId] = useState("");
   const [learningInsights, setLearningInsights] = useState<LearningInsights | null>(null);
   const [learningFeedback, setLearningFeedback] = useState<"good" | "bad" | "">("");
@@ -169,6 +223,11 @@ export default function Home() {
         { label: voiceInputMode === "recording" ? "전체 녹음" : "목소리", done: hasVoiceInput },
         { label: "대본", done: hasPrompt },
       ];
+  // `catalogFor`는 둘을 섞지 않는다 — 내 것이 하나라도 있으면 프리셋은 아예 빠진다.
+  // 그래서 `usingPresetCharacter`가 목록 전체의 성격을 가른다.
+  const myCharacters = usingPresetCharacter ? [] : clipartEntries;
+  const presetKeywords = usingPresetCharacter ? clipartEntries.map((entry) => entry.keyword) : [];
+  const hiddenPresetCount = Math.max(0, presetKeywords.length - PRESET_KEYWORD_PREVIEW_COUNT);
   const estimatedTalkSeconds = estimateTalkSeconds(script, speakingSpeed);
   const outputSizeLabel = {
     "1080p": "MP4 1080x1920",
@@ -256,8 +315,34 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    loadClipartCatalog();
+  }, []);
+
+  useEffect(() => {
     loadLearningInsights(selectedFormat);
   }, [selectedFormat]);
+
+  /**
+   * 이 수강생의 릴스에 실제로 쓰일 캐릭터 목록을 읽는다.
+   *
+   * `usingPreset`은 서버가 정한다(`lib/clipart-store.ts`의 `catalogFor`). 여기서 다시 계산하지
+   * 않는 이유는 규칙이 두 곳에 생기면 화면의 안내와 실제 렌더가 조용히 어긋나기 때문이다 —
+   * 안내가 틀리는 순간 이 기능은 없느니만 못해진다.
+   */
+  async function loadClipartCatalog() {
+    try {
+      const response = await fetch("/api/clipart", { cache: "no-store" });
+      const data = await response.json();
+
+      // 401(로그인 전)을 포함해 답을 못 받은 경우다. 모르는 것을 아는 척하지 않는다.
+      if (!response.ok) return;
+
+      setClipartEntries(Array.isArray(data.entries) ? (data.entries as ClipartEntrySummary[]) : []);
+      setUsingPresetCharacter(Boolean(data.usingPreset));
+    } catch {
+      // 같은 이유로 아무것도 바꾸지 않는다.
+    }
+  }
 
   async function loadLearningInsights(format: ContentFormat) {
     try {
@@ -354,6 +439,81 @@ export default function Home() {
         error: error instanceof Error ? error.message : "Voicebox 목소리 등록에 실패했습니다.",
       });
       setVoiceboxStatus("offline");
+    }
+  }
+
+  /**
+   * 올릴 그림을 고른다. 아직 보내지는 않는다 — 키워드를 먼저 확인시켜야 하기 때문이다.
+   *
+   * 키워드가 곧 이 캐릭터가 불려 나올 조건이라, 파일명 그대로 저장되면 `character-final-2` 같은
+   * 값이 키워드가 되어 어떤 대본에도 걸리지 않는 항목이 만들어진다. 목록에는 보이는데 영상에는
+   * 영영 안 나오는 상태라 수강생이 원인을 알 수 없다.
+   */
+  function selectCharacterFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // 기본값은 파일명이되, 수강생이 직접 고친 키워드는 덮지 않는다. 그림만 다시 고르는
+    // 경우(잘못된 파일을 골랐을 때)에 애써 적은 낱말이 사라지면 안 된다.
+    const previousDefault = fileStem(characterFileName);
+    setCharacterKeyword((current) => (current && current !== previousDefault ? current : fileStem(file.name)));
+    setCharacterFile(file);
+    setCharacterFileName(file.name);
+    setCharacterUploadStatus("idle");
+    setCharacterError("");
+  }
+
+  async function uploadClipart() {
+    if (!characterFile) {
+      setCharacterError("올릴 캐릭터 PNG 파일을 먼저 선택해주세요.");
+      return;
+    }
+
+    if (!characterKeyword.trim()) {
+      setCharacterError("대본에서 이 캐릭터를 부를 키워드를 입력해주세요.");
+      return;
+    }
+
+    setCharacterUploadStatus("uploading");
+    setCharacterError("");
+
+    const formData = new FormData();
+    formData.append("image", characterFile);
+    formData.append("keyword", characterKeyword.trim());
+    formData.append("aliases", characterAliases);
+    formData.append("category", characterCategory.trim());
+
+    try {
+      const response = await fetch("/api/clipart", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        /**
+         * 라우트의 거절 문구를 **그대로** 올린다. 이 라우트는 거절 이유마다 다른 한국어 문장을
+         * 돌려준다(PNG가 아님 / 투명 배경이 없음 / 키워드 없음 / 너무 큼). "업로드 실패"로
+         * 뭉개면 수강생은 그림을 다시 내보내야 하는지 이름을 고쳐야 하는지 알 수 없고,
+         * 알 수 없으면 같은 파일을 다시 올린다.
+         */
+        throw new Error(data.error ?? "캐릭터 업로드에 실패했습니다.");
+      }
+
+      // 내 것이 하나라도 생기면 프리셋은 더 이상 쓰이지 않는다(`catalogFor`). 방금 저장에
+      // 성공했으므로 그 사실은 여기서 이미 확정이고, 이어지는 재조회가 실패해도 안내는 내려간다.
+      setClipartEntries([data.entry as ClipartEntrySummary]);
+      setUsingPresetCharacter(false);
+      setCharacterUploadStatus("done");
+      setCharacterFile(null);
+      setCharacterFileName("");
+      setCharacterKeyword("");
+      setCharacterAliases("");
+      setCharacterCategory("");
+      await loadClipartCatalog();
+    } catch (error) {
+      setCharacterUploadStatus("idle");
+      setCharacterError(error instanceof Error ? error.message : "캐릭터 업로드에 실패했습니다.");
     }
   }
 
@@ -1157,6 +1317,127 @@ export default function Home() {
               </span>
             ))}
           </div>
+
+          {/*
+            생성 버튼 **바로 위**에 둔다. 이 안내가 하는 일은 "내 캐릭터가 아니다"를 발행 전에
+            알아채게 하는 것 하나뿐이고, 앱 안에서 알아채지 못하면 남의 얼굴이 내 이름으로
+            나간 뒤에 시청자가 먼저 알게 된다 — 이 저장소가 목소리에서 이미 한 번 겪은 실패다.
+          */}
+          <section className="characterPanel" aria-label="릴스에 들어갈 캐릭터">
+            {usingPresetCharacter ? (
+              <div className="presetCharacterNotice" role="status">
+                <span className="presetCharacterFlag">기본 캐릭터 사용 중</span>
+                <strong>지금 만들면 내 캐릭터가 아닙니다</strong>
+                <p>
+                  아직 올린 캐릭터가 없어서, 캐릭터가 필요한 장면에는 운영자가 만들어 둔 기본
+                  캐릭터가 대신 들어갑니다. 이대로 발행하면 내 얼굴이 아닌 캐릭터가 내 이름으로
+                  나갑니다.
+                </p>
+                <p>강의에서 만든 내 캐릭터를 아래에서 올리면, 그때부터 내 캐릭터만 쓰입니다.</p>
+                {presetKeywords.length > 0 && (
+                  <>
+                    <div className="presetCharacterKeywords">
+                      {presetKeywords.slice(0, PRESET_KEYWORD_PREVIEW_COUNT).map((keyword) => (
+                        <span key={keyword}>{keyword}</span>
+                      ))}
+                      {hiddenPresetCount > 0 && <span className="more">외 {hiddenPresetCount}개</span>}
+                    </div>
+                    {/*
+                      프리셋은 그림을 띄우지 않는다. 프리셋 항목의 `file`은 운영자 Codex 스킬
+                      디렉터리 기준 경로라 브라우저에서 열 수 없고, `<img>`로 걸면 전부 깨진
+                      이미지가 된다 — "앱이 고장났다"로 읽혀서, 정작 믿어야 할 이 안내까지
+                      같이 의심받는다. 낱말은 텍스트라 항상 정확하고, 무엇이 캐릭터를 불러내는지도
+                      같이 알려 준다.
+                    */}
+                    <small>
+                      대본에 이 낱말이 나오는 장면에 기본 캐릭터가 들어갑니다. 기본 캐릭터 그림
+                      파일은 운영자 컴퓨터에만 있어 여기서는 미리보기를 띄우지 못합니다.
+                    </small>
+                  </>
+                )}
+              </div>
+            ) : myCharacters.length > 0 ? (
+              <div className="myCharacterList">
+                <div className="myCharacterHeader">
+                  <span>내 캐릭터</span>
+                  <strong>{myCharacters.length}개</strong>
+                </div>
+                <p>내 캐릭터만 쓰입니다. 기본 캐릭터는 더 이상 들어가지 않습니다.</p>
+                <ul>
+                  {myCharacters.map((entry) => (
+                    <li key={entry.id}>
+                      <img alt="" src={studentClipartSrc(entry.file)} />
+                      <div>
+                        <strong>{entry.keyword}</strong>
+                        <span>{entry.aliases.length ? entry.aliases.join(", ") : "비슷한 말 없음"}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <div className="characterUpload">
+              <strong>내 캐릭터 올리기</strong>
+
+              <label className="characterFilePick">
+                <input accept="image/png" onChange={selectCharacterFile} type="file" />
+                <span>{characterFileName || "투명 배경 PNG 고르기"}</span>
+              </label>
+              <p className="characterHint">
+                캐릭터는 영상 위에 얹히기 때문에 배경이 투명한 PNG만 받습니다.
+              </p>
+
+              <label className="characterField">
+                <span>키워드</span>
+                <input
+                  onChange={(event) => setCharacterKeyword(event.target.value)}
+                  placeholder="예: 스쿼트"
+                  value={characterKeyword}
+                />
+              </label>
+              <p className="characterHint">
+                대본에 이 낱말이 나오는 장면에 이 캐릭터가 들어갑니다. 대본에서 실제로 쓰는
+                낱말로, 두 글자 이상 적어주세요 — 한 글자는 다른 낱말 속에 우연히 걸립니다.
+              </p>
+
+              <label className="characterField">
+                <span>비슷한 말</span>
+                <input
+                  onChange={(event) => setCharacterAliases(event.target.value)}
+                  placeholder="선택 · 쉼표로 구분 · 예: 하체, 앉았다 일어서기"
+                  value={characterAliases}
+                />
+              </label>
+
+              <label className="characterField">
+                <span>분류</span>
+                <input
+                  onChange={(event) => setCharacterCategory(event.target.value)}
+                  placeholder="선택 · 예: 운동"
+                  value={characterCategory}
+                />
+              </label>
+
+              <button
+                className="characterUploadButton"
+                disabled={characterUploadStatus === "uploading"}
+                onClick={uploadClipart}
+                type="button"
+              >
+                {characterUploadStatus === "uploading" ? "올리는 중…" : "내 캐릭터 올리기"}
+              </button>
+
+              {characterError && (
+                <p className="characterError" role="alert">{characterError}</p>
+              )}
+              {characterUploadStatus === "done" && !characterError && (
+                <p className="characterDone" role="status">
+                  캐릭터를 저장했습니다. 이제부터 내 캐릭터가 들어갑니다.
+                </p>
+              )}
+            </div>
+          </section>
 
           <div className="learningPanel" aria-label="학습 인사이트">
             <div className="learningHeader">

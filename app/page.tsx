@@ -1392,6 +1392,16 @@ export default function Home() {
                       <img alt="" src={studentClipartSrc(entry.file)} />
                       <div>
                         <strong>{entry.keyword}</strong>
+                        {/*
+                          분류는 매칭에 쓰이지 않는다 — 캐릭터를 부르는 건 키워드와 비슷한 말뿐이다.
+                          그래도 여기 보여 주는 이유: 이 칸은 수강생이 직접 채우는 칸인데, 적은 값이
+                          화면 어디에도 나타나지 않으면 저장이 안 된 것과 구별할 방법이 없다. 자기가
+                          쓴 글자가 자기 목록에 그대로 보이는 것이 "적힌 대로 남아 있다"는 유일한 증거다.
+                          비워 둔 사람에게는 아무것도 늘어나지 않도록 있을 때만 그린다.
+                        */}
+                        {entry.category ? (
+                          <span className="myCharacterCategory">{entry.category}</span>
+                        ) : null}
                         <span>{entry.aliases.length ? entry.aliases.join(", ") : "비슷한 말 없음"}</span>
                       </div>
                     </li>

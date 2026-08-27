@@ -2224,6 +2224,22 @@ button {
   white-space: nowrap;
 }
 
+/*
+  분류 칩. 비슷한 말 줄과 같은 회색으로 두면 두 줄이 한 덩어리로 읽혀 무엇이 분류인지
+  구별되지 않는다. 목록 헤더가 쓰는 강조색을 그대로 빌려 낱말 하나짜리 꼬리표로 세운다.
+  부모가 grid라 `justify-self: start`가 있어야 칩이 줄 전체로 늘어나지 않는다.
+*/
+.myCharacterList li span.myCharacterCategory {
+  justify-self: start;
+  max-width: 100%;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--acid) 30%, transparent);
+  border-radius: 999px;
+  color: var(--acid);
+  font-size: 10px;
+  font-weight: 850;
+}
+
 .characterUpload {
   display: grid;
   gap: 6px;

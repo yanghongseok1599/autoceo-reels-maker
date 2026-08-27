@@ -117,6 +117,18 @@ export function characterEntry(sceneFrame: number, fps: number) {
  * `<Img>`가 걸어 둔 `delayRender` 핸들도 정리 함수에서 `continueRender`로 풀리므로
  * 프레임이 멈추지도 않는다.
  *
+ * **걷어 내는 것은 실패한 그림 하나지, 캐릭터라는 자리가 아니다.** 실패 표시를 `boolean`으로
+ * 들고 있으면 안 된다 — `SceneRouter`는 씬이 바뀌어도 같은 자리에 이 컴포넌트를 그리므로
+ * React가 인스턴스를 재사용하고, `src`가 바뀌어도 그 boolean은 살아남는다. 그러면 릴 앞쪽
+ * 그림 한 장이 404난 순간부터 **뒤에 오는 멀쩡한 캐릭터가 전부 사라진다.** 실제로 그렇게
+ * 되는 것을 두 씬 `renderFrames`로 확인했다(`missingCharacterRender.test.ts`의
+ * "앞 씬에서 실패한 캐릭터가 뒤 씬의 캐릭터를 데려가지 않는다").
+ *
+ * 그래서 실패를 **그 `src`에 매어** 기억한다. 호출부에 `key={src}`를 다는 방법도 같은 결과를
+ * 내지만, 그러면 이 컴포넌트가 약속한 "실패한 그림만 빠진다"가 **부르는 쪽이 key를 기억하는지**에
+ * 걸린다 — 잊으면 아무 데서도 오류가 나지 않고 릴스에서 캐릭터만 조용히 사라진다. 그 보장은
+ * 이 컴포넌트의 것이므로 여기서 지킨다.
+ *
  * `startTime`은 형제 씬 컴포넌트와 같은 씬 프레임 계산을 하기 위해 받는다. 전역 프레임을
  * 그대로 쓰면 등장 모션이 릴 맨 앞에서 한 번만 재생되고, 3번째 씬에서 처음 나타나는
  * 캐릭터는 모션 없이 튀어나온다. 다만 이 값은 **씬의 시작이 아니라 이 캐릭터가 처음
@@ -130,7 +142,7 @@ export const CharacterImage: React.FC<{
 }> = ({ src, startTime, sceneScale }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const [failed, setFailed] = useState(false);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const sceneFrame = frame - Math.round(startTime * fps);
   const { opacity, translateY } = characterEntry(sceneFrame, fps);
 
@@ -148,7 +160,7 @@ export const CharacterImage: React.FC<{
   const counterScale = undoSceneScale(sceneScale);
 
   // 그림이 오지 않았다. 캐릭터 없는 씬은 멀쩡한 씬이다.
-  if (failed) return null;
+  if (failedSrc === src) return null;
 
   return (
     <AbsoluteFill
@@ -166,7 +178,7 @@ export const CharacterImage: React.FC<{
          * **없을 때만** `cancelRender`를 부른다(`remotion/dist/cjs/Img.js`의 `didGetError`).
          * 재시도 두 번은 그대로 살려 둔다 — 잠깐 흔들린 CDN이라면 그 사이에 붙는다.
          */
-        onError={() => setFailed(true)}
+        onError={() => setFailedSrc(src)}
         style={{
           width: BOX_WIDTH,
           height: BOX_HEIGHT,

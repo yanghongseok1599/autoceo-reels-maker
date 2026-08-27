@@ -37,7 +37,33 @@ export interface JobIndexEntry {
   claimedAt: string | null;
 }
 
-const readIndex = () => store.read<JobIndexEntry[]>(INDEX_KEY, []);
+/**
+ * 인덱스만은 **읽지 못해도 견딘다.** 저장소는 이제 깨진 JSON을 만나면 던지는데
+ * (`lib/store/file-store.ts`), 그 규칙이 옳은 이유와 여기서 예외를 두는 이유가 같은 뿌리다.
+ *
+ * 원본에는 시끄럽게, **파생된 투영에는 관대하게.**
+ *
+ * 수강생의 목소리 목록은 그 사실의 유일한 사본이라, 깨진 것을 "목소리가 없습니다"로 읽으면
+ * 본인에게도 고칠 사람에게도 유실이 감춰진다 — 그래서 던져야 한다. `job-index`는 정반대다.
+ * 정본은 `jobs/<id>`이고 인덱스는 그 투영일 뿐이며, 고아 쓸기(`sweepOrphans`)가 바로
+ * 이걸 `jobs/`에서 다시 만들어 내려고 존재한다. 여기서 던지면 **인덱스를 고칠 수 있는
+ * 유일한 경로가 함께 멈춘다** — 워커가 아무 잡도 집지 못하게 되고, 그건 인덱스가 깨져서
+ * 잃은 것보다 크다.
+ *
+ * 일관성을 위해 이걸 "되돌리지" 말 것. 의도한 비대칭이다.
+ *
+ * 깨진 이유는 가리지 않는다. 어떤 이유로든 못 읽으면 투영은 다시 만들면 그만이고, 저장소가
+ * 통째로 아픈 경우라면 쓸기가 `jobs/<id>`를 읽다가 그때 시끄럽게 실패한다.
+ *
+ * @returns `corrupt`는 "읽지 못했다"는 뜻이다 — 부르는 쪽이 쓸기를 앞당길 때 쓴다.
+ */
+async function readIndex(): Promise<{ entries: JobIndexEntry[]; corrupt: boolean }> {
+  try {
+    return { entries: await store.read<JobIndexEntry[]>(INDEX_KEY, []), corrupt: false };
+  } catch {
+    return { entries: [], corrupt: true };
+  }
+}
 
 const entryOf = (job: RenderJob): JobIndexEntry => ({
   id: job.id,
@@ -46,9 +72,14 @@ const entryOf = (job: RenderJob): JobIndexEntry => ({
   claimedAt: job.claimedAt,
 });
 
-/** 인덱스는 투영이다. 호출자는 반드시 잡을 먼저 쓴 뒤에 이걸 부른다. */
+/**
+ * 인덱스는 투영이다. 호출자는 반드시 잡을 먼저 쓴 뒤에 이걸 부른다.
+ *
+ * 인덱스를 못 읽었으면 이 잡 하나만 담은 배열을 쓴다. 나머지 항목은 그 순간 사라지지만
+ * 파일은 다시 유효한 JSON이 되고, 사라진 항목은 쓸기가 `jobs/`에서 되찾는다.
+ */
 async function putIndexEntry(job: RenderJob): Promise<void> {
-  const index = await readIndex();
+  const { entries: index } = await readIndex();
   const next = entryOf(job);
   await store.write(
     INDEX_KEY,
@@ -166,11 +197,17 @@ async function sweepOrphans(now: Date, index: JobIndexEntry[]): Promise<JobIndex
  * 후보가 하나도 없을 때만, 그리고 `SWEEP_INTERVAL_MS`마다 한 번만 고아를 쓴다.
  */
 export async function claimNextJob(now: Date = new Date()): Promise<RenderJob | null> {
-  const index = await readIndex();
+  const { entries: index, corrupt } = await readIndex();
   const claimed = await claimFrom(index, now);
   if (claimed) return claimed;
 
-  if (!sweepDue(now)) return null;
+  /**
+   * 인덱스를 못 읽었으면 30초를 기다리지 않는다. 스로틀은 인덱스가 멀쩡한데 후보만 없는
+   * **흔한** 경우에 매 폴링마다 `jobs/`를 훑지 않으려고 있는 것이고, 그 경우 기다림은
+   * 실제로 비용을 아낀다. 인덱스를 못 읽는 상태는 정확히 쓸기가 고치라고 만들어진 상태라,
+   * 여기서 기다리는 것은 아무것도 사지 못하면서 큐 전체를 최대 30초 멈춰 세울 뿐이다.
+   */
+  if (!corrupt && !sweepDue(now)) return null;
   const recovered = await sweepOrphans(now, index);
   return recovered ? await claimFrom(recovered, now) : null;
 }

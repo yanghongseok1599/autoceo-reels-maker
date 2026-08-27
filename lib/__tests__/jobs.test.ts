@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -122,6 +123,96 @@ describe('job queue', () => {
  * 있는데 인덱스에 항목이 없으면 아무 워커도 집어가지 않고, 집어가지 않으니 항목을 다시
  * 쓸 전이도 영영 오지 않는다. 수강생에게는 0%에서 멈춘 것으로 보인다.
  */
+/**
+ * 저장소는 이제 깨진 JSON을 만나면 던진다. 그 규칙에 **인덱스만 예외**인 것이 의도이고,
+ * 여기서 양쪽을 다 잡아 둔다 — 한쪽만 있으면 다음 사람이 "일관성"을 이유로 되돌린다.
+ */
+describe('깨진 job-index는 견디고, 원본이 깨지면 던진다', () => {
+  /**
+   * 실제로 겪은 모양 그대로 **날바이트**를 심는다. `store.write`로는 이 상태를 만들 수 없다 —
+   * 그건 값을 JSON으로 직렬화하므로 깨진 문자열조차 멀쩡한 JSON 문자열로 저장된다.
+   */
+  async function plantCorrupt(key: string): Promise<void> {
+    const target = path.join(process.env.STORE_DIR as string, `${key}.json`);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, '[{"id":"job_x"}\n]]', 'utf8');
+  }
+
+  function queuedJob(id: string): RenderJob {
+    return {
+      id, projectId: 'p1', ownerId: 'u1', engine: 'remotion', status: 'queued',
+      progress: 0, claimedAt: null, resultUrl: null, error: null,
+      createdAt: '2026-08-28T00:00:00.000Z',
+    };
+  }
+
+  /**
+   * 인덱스는 `jobs/<id>`의 투영일 뿐이고 쓸기가 그걸 다시 만든다. 여기서 던지면
+   * 인덱스를 고칠 수 있는 유일한 경로까지 멈춰, 워커가 아무 잡도 집지 못한다.
+   */
+  it('still claims a queued job when the index is malformed', async () => {
+    const t0 = new Date('2026-08-28T00:00:00.000Z');
+    // 스로틀은 이 검사의 관심사가 아니다. 먼저 쓸어서 시계를 맞춰 두고 만료시킨 뒤에 본다 —
+    // 앞선 테스트가 남긴 `lastSweptAt`(모듈 상태)에 결과가 좌우되지 않게 한다.
+    await claimNextJob(t0);
+
+    const job = queuedJob('job_corrupt_idx');
+    await store.write(`jobs/${job.id}`, job);
+    await plantCorrupt('job-index');
+
+    const claimed = await claimNextJob(new Date(t0.getTime() + SWEEP_INTERVAL_MS));
+    expect(claimed?.id).toBe(job.id);
+  });
+
+  /**
+   * 그리고 기다리지 않는다. 스로틀은 인덱스가 멀쩡한데 후보만 없을 때 `jobs/` 훑기를
+   * 아끼려고 있는 것이고, 못 읽는 인덱스는 정확히 쓸기가 고치라고 있는 상태다.
+   */
+  it('sweeps immediately instead of stalling for the throttle', async () => {
+    const t0 = new Date('2026-08-28T00:00:00.000Z');
+    // 스로틀을 켜 둔다 — 방금 쓸었으므로 멀쩡한 인덱스였다면 기다려야 한다.
+    await claimNextJob(t0);
+
+    const job = queuedJob('job_no_wait');
+    await store.write(`jobs/${job.id}`, job);
+    await plantCorrupt('job-index');
+
+    const claimed = await claimNextJob(new Date(t0.getTime() + 1000));
+    expect(claimed?.id).toBe(job.id);
+  });
+
+  // 인덱스는 다시 유효한 JSON이 된다 — 못 읽은 상태가 눌러앉지 않는다.
+  it('leaves the index readable again after the sweep rebuilds it', async () => {
+    const t0 = new Date('2026-08-28T00:00:00.000Z');
+    await claimNextJob(t0);
+
+    const job = queuedJob('job_rebuilt');
+    await store.write(`jobs/${job.id}`, job);
+    await plantCorrupt('job-index');
+
+    await claimNextJob(new Date(t0.getTime() + SWEEP_INTERVAL_MS));
+    const index = await store.read<JobIndexEntry[]>('job-index', []);
+    expect(index.map((e) => e.id)).toEqual([job.id]);
+  });
+
+  /**
+   * 반대쪽. 잡 자체는 **정본**이므로 깨졌으면 조용히 "없음"이 되면 안 된다 — 그러면
+   * 수강생의 잡이 흔적 없이 사라진 것처럼 보인다.
+   */
+  it('throws when the job shard itself is malformed', async () => {
+    await plantCorrupt('jobs/job_bad');
+    await expect(getJob('job_bad')).rejects.toThrow('저장소 값이 깨져 읽을 수 없습니다');
+  });
+
+  // 수강생 소유 데이터도 정본이다. 깨진 것을 빈 목록으로 읽으면 유실이 감춰진다.
+  it('throws when an owner-scoped store is malformed', async () => {
+    await plantCorrupt('fish-voices/u1');
+    await expect(store.read('fish-voices/u1', [])).rejects.toThrow(
+      '저장소 값이 깨져 읽을 수 없습니다: fish-voices/u1',
+    );
+  });
+});
+
 describe('orphan sweep', () => {
   const orphanJob = (over: Partial<RenderJob> = {}): RenderJob => ({
     id: `job_${Math.random().toString(16).slice(2, 18)}`,

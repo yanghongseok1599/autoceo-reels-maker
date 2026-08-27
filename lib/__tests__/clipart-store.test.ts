@@ -271,6 +271,30 @@ describe('clipart keys – 소유자별 키', () => {
   });
 
   /**
+   * upsert의 소유자 검사도 같은 이유로 눌러 본다. `findIndex`에서 `ownerId` 비교를 빼도
+   * 어떤 테스트도 실패하지 않았다 — 위 필터가 그랬듯 두 번째 겹이 아무것에도 고정돼 있지
+   * 않았다는 뜻이다. 주석(`lib/clipart-store.ts`)이 약속하는 보장이 정확히 이것이다:
+   * **수강생 A가 `기쁨`을 올릴 때 B의 `기쁨`이 사라지지 않는다.**
+   *
+   * 키가 이미 소유자를 나누므로 남의 레코드가 내 키에 앉아 있는 상황을 일부러 만든다 —
+   * 이전(`scripts/shard-store.ts`)이나 옛 데이터가 만들 수 있는 모양이고, 소유자 비교가
+   * 사라지면 upsert가 그 레코드를 **갈아 끼워 없앤다.**
+   */
+  it("upserts over the caller's own entry, never a foreign one with the same keyword", async () => {
+    const foreign = { ...upload('u2', '기쁨', 'clipart/theirs.png'), source: 'student' as const };
+    await store.write('clipart-library/u1', [foreign]);
+
+    const mine = await addStudentClipart(upload('u1', '기쁨', 'clipart/mine.png'));
+
+    const stored = await store.read<ClipartEntry[]>('clipart-library/u1', []);
+    // 소유자 비교가 없으면 `기쁨` 하나만 남고 그 하나가 u1의 것이다 — B의 그림이 사라진다.
+    expect(stored).toHaveLength(2);
+    expect(stored.find((e) => e.ownerId === 'u2')).toEqual(foreign);
+    expect(stored.find((e) => e.ownerId === 'u1')?.file).toBe('clipart/mine.png');
+    expect(mine.id).not.toBe(foreign.id);
+  });
+
+  /**
    * 빈 소유자는 저장소를 **읽지 않는다**. 선가드가 없으면 빈 문자열이 그대로 키가 되고
    * (`clipart-library/`), 그 자리에 있는 것은 소유자 필터마저 통과한다(`'' === ''`). 그때 빈 세션 하나가
    * 전부를 보게 된다 — 선가드가 지워져도 아무것도 실패하지 않으면 언젠가 지워진다.

@@ -4,6 +4,13 @@ import { store } from '../../lib/store';
 import { getProject } from '../../lib/projects';
 import { claimNextJob, type JobIndexEntry } from '../../lib/jobs';
 import { getStyleSheet } from '../../lib/style-sheet';
+import {
+  getStudent,
+  hashCode,
+  verifyInviteCode,
+  STUDENT_INDEX_KEY,
+  type StudentIndexEntry,
+} from '../../lib/auth';
 
 /**
  * `STORE_DIR`은 `vitest.setup.ts`가 테스트마다 새 임시 디렉터리로 잡아 준다.
@@ -302,13 +309,96 @@ describe('shardStore — 보고와 재실행', () => {
     expect((await readList('clipart-library/u1')).map((e) => e.id)).toEqual(['c1', 'c2']);
   });
 
-  it('students는 건드리지 않는다', async () => {
-    await store.write('students', [{ id: 'u1' }]);
+});
+
+/**
+ * 처음에는 `students`를 남겨 뒀다. 그건 이 계획이 겨냥한 결함을 **가장 비싼 자리에**
+ * 남겨 두는 것이었다 — 렌더 한 편이 배열을 통째로 다시 쓰는 사이에 발급된 계정이 지워진다.
+ *
+ * 이전에서 인덱스를 빼먹으면 고장이 조용하다: 계정은 옮겨졌는데 로그인이 코드로 찾아갈
+ * 다리가 없어 **전원이 못 들어온다.** 그래서 단언은 키 존재가 아니라 `verifyInviteCode`다.
+ */
+describe('shardStore — 수강생 계정', () => {
+  const readIndex = () => store.read<StudentIndexEntry[]>(STUDENT_INDEX_KEY, []);
+  const legacyStudent = (id: string, code: string, over: Record<string, unknown> = {}) => ({
+    id, name: `수강생-${id}`, codeHash: hashCode(code), monthlyRenderCount: 0,
+    createdAt: '2026-08-26T00:00:00Z', ...over,
+  });
+
+  it('계정을 id별 키로 옮기고 초대코드로 로그인할 수 있게 한다', async () => {
+    await store.write('students', [
+      legacyStudent('u1', 'AAAA-1111', { monthlyRenderCount: 5, renderPeriod: '2026-08' }),
+      legacyStudent('u2', 'BBBB-2222'),
+    ]);
 
     const result = await shardStore();
 
+    expect(result.moved.students).toBe(2);
+    expect(result.moved[STUDENT_INDEX_KEY]).toBe(2);
+    expect((await getStudent('u1'))?.monthlyRenderCount).toBe(5);
+    expect((await verifyInviteCode('AAAA-1111'))?.id).toBe('u1');
+    expect((await verifyInviteCode('BBBB-2222'))?.id).toBe('u2');
+  });
+
+  it('옛 키를 남겨 둬서 잘못된 실행을 되돌릴 수 있다', async () => {
+    await store.write('students', [legacyStudent('u1', 'AAAA-1111')]);
+
+    await shardStore();
+
     expect(await readList('students')).toHaveLength(1);
-    expect(await store.list('students')).toEqual([]);
+    // 옛 키만 보면 아무것도 하지 않은 구현도 통과한다. 옮겨졌다는 것까지 함께 본다.
+    expect(await readObject('students/u1')).not.toBeNull();
+  });
+
+  it('두 번 돌려도 인덱스가 늘지 않는다', async () => {
+    await store.write('students', [legacyStudent('u1', 'AAAA-1111')]);
+
+    await shardStore();
+    const indexAfterFirstRun = await readIndex();
+    const result = await shardStore();
+
+    expect(await readIndex()).toEqual(indexAfterFirstRun);
+    expect(result.moved.students).toBe(0);
+    expect(result.moved[STUDENT_INDEX_KEY]).toBe(0);
+    expect(result.alreadyThere[STUDENT_INDEX_KEY]).toBe(1);
+    expect((await verifyInviteCode('AAAA-1111'))?.id).toBe('u1');
+  });
+
+  it('분리 뒤에 진행된 생성 횟수를 옛 배열로 덮지 않는다', async () => {
+    await store.write('students', [legacyStudent('u1', 'AAAA-1111', { monthlyRenderCount: 0 })]);
+    await store.write('students/u1', legacyStudent('u1', 'AAAA-1111', { monthlyRenderCount: 9 }));
+
+    await shardStore();
+
+    expect((await getStudent('u1'))?.monthlyRenderCount).toBe(9);
+    // 그래도 로그인 다리는 만들어 준다 — 계정이 있어도 인덱스가 없으면 못 들어온다.
+    expect((await verifyInviteCode('AAAA-1111'))?.id).toBe('u1');
+  });
+
+  it('id가 없는 계정은 옮기지 않고 보고한다', async () => {
+    await store.write('students', [{ name: '이름만', codeHash: hashCode('CCCC-3333') }]);
+
+    const result = await shardStore();
+
+    expect(result.unkeyed.students).toBe(1);
+    expect(result.moved.students).toBe(0);
+    expect(await readIndex()).toEqual([]);
+  });
+
+  it('초대코드 해시가 없는 계정은 옮기되 인덱스에는 넣지 않는다', async () => {
+    await store.write('students', [{ id: 'u1', name: '해시없음' }]);
+
+    const result = await shardStore();
+
+    expect(result.moved.students).toBe(1);
+    expect(await readObject('students/u1')).toMatchObject({ id: 'u1' });
+    // 어떤 코드로도 찾을 수 없는 항목을 인덱스에 넣으면 조용한 쓰레기가 된다.
+    expect(await readIndex()).toEqual([]);
+  });
+
+  it('옛 키가 없으면 건너뛴다', async () => {
+    const result = await shardStore();
+    expect(result.skipped).toContain('students');
     expect(result.moved.students).toBeUndefined();
   });
 });

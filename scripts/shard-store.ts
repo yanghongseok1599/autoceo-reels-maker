@@ -24,6 +24,7 @@
  */
 import { selectStore } from '../lib/store';
 import type { JobIndexEntry, RenderJob } from '../lib/jobs';
+import { STUDENT_INDEX_KEY, type StudentAccount, type StudentIndexEntry } from '../lib/auth';
 
 /** 소유자를 알 수 없는 기록이 모이는 자리. 어떤 세션의 id도 될 수 없는 값이다. */
 export const LEGACY_OWNER = '__legacy__';
@@ -161,6 +162,38 @@ export async function shardStore(): Promise<ShardReport> {
   }
 
   /**
+   * 로그인이 코드로 계정을 찾아가는 다리(`student-index`)를 **옮겨진 계정에서** 만든다.
+   *
+   * 이것이 없으면 이전은 조용히 반쪽이 된다: 계정은 `students/<id>`에 멀쩡히 있는데
+   * `verifyInviteCode`가 볼 인덱스가 비어 있어 **아무도 로그인하지 못한다.** 옛 배열이
+   * 그대로 남아 있어도 이제 아무도 그걸 읽지 않으므로 저절로 낫지도 않는다.
+   *
+   * 정본은 `students/<id>`이므로 옛 배열이 아니라 **옮겨진 레코드를 다시 읽어** 항목을
+   * 만든다. 겹침은 `codeHash`로 본다 — 그게 로그인이 찾는 열쇠이고, 두 번 돌려도 늘지 않는다.
+   * 해시가 없는 레코드는 어떤 코드로도 찾을 수 없으므로 인덱스에 넣지 않는다(레코드는 옮겨진다).
+   */
+  async function buildStudentIndex(ids: string[]): Promise<void> {
+    const existing = expectArray(
+      await store.read<unknown>(STUDENT_INDEX_KEY, []),
+      STUDENT_INDEX_KEY,
+    );
+    const known = new Set(existing.map((entry) => entry.codeHash));
+
+    const added: StudentIndexEntry[] = [];
+    for (const id of ids) {
+      const student = await store.read<StudentAccount | null>(`students/${id}`, null);
+      const codeHash = typeof student?.codeHash === 'string' ? student.codeHash : '';
+      if (!codeHash || known.has(codeHash)) continue;
+      added.push({ codeHash, id });
+      known.add(codeHash);
+    }
+
+    if (added.length) await store.write(STUDENT_INDEX_KEY, [...existing, ...added]);
+    report.moved[STUDENT_INDEX_KEY] = added.length;
+    report.alreadyThere[STUDENT_INDEX_KEY] = ids.length - added.length;
+  }
+
+  /**
    * `fish-voices`·`clipart-library`·`learning-records`처럼 **소유자당 배열 하나**가 되는 옛 키.
    *
    * 이미 있는 항목 뒤에 덧붙인다(앞이 아니라). `matchClipart`는 동점일 때 앞선 항목을 고르므로
@@ -245,6 +278,14 @@ export async function shardStore(): Promise<ShardReport> {
   const jobs = await readOldKey('jobs');
   if (jobs) await buildJobIndex(await shardById('jobs', jobs));
 
+  /**
+   * 수강생 계정도 옮긴다. 처음에는 "로그인이 읽는 목록 하나"라며 남겨 뒀는데, 그건 이
+   * 계획이 겨냥한 바로 그 결함을 가장 비싼 자리에 남겨 두는 것이었다 — 렌더 한 편이
+   * `students` 배열을 통째로 다시 쓰는 사이에 발급된 계정이 지워진다.
+   */
+  const students = await readOldKey('students');
+  if (students) await buildStudentIndex(await shardById('students', students));
+
   const styleSheets = await readOldKey('style-sheets');
   if (styleSheets) await shardStyleSheets(styleSheets);
 
@@ -253,7 +294,6 @@ export async function shardStore(): Promise<ShardReport> {
     if (records) await shardByOwnerList(key, records);
   }
 
-  // `students`는 그대로다. 나뉜 키가 아니라 로그인이 읽는 목록 하나이므로 옮길 것이 없다.
   return report;
 }
 

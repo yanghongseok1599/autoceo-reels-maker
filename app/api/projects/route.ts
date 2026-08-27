@@ -2,8 +2,7 @@ import { NextResponse } from 'next/server';
 import { createProject, canRender, chargeRender, MONTHLY_RENDER_LIMIT } from '@/lib/projects';
 import { enqueueJob } from '@/lib/jobs';
 import { authorizeVoice } from '@/lib/voice-access';
-import { store } from '@/lib/store';
-import { readSessionFromRequest, type StudentAccount } from '@/lib/auth';
+import { getStudent, readSessionFromRequest, saveStudent } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,8 +10,7 @@ export async function POST(request: Request) {
   const ownerId = readSessionFromRequest(request);
   if (!ownerId) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
 
-  const students = await store.read<StudentAccount[]>('students', []);
-  const student = students.find((s) => s.id === ownerId);
+  const student = await getStudent(ownerId);
   if (!student) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
 
   if (!canRender(student)) {
@@ -44,7 +42,11 @@ export async function POST(request: Request) {
   const project = await createProject({ ownerId, script, voiceReferenceId: voice.voiceId });
   const job = await enqueueJob({ projectId: project.id, ownerId });
 
-  await store.write('students', students.map((s) => (s.id === ownerId ? chargeRender(s) : s)));
+  /**
+   * 자기 계정 하나만 쓴다. 예전에는 `students` 배열 전체를 다시 써서, 이 몇 줄 사이에
+   * 만들어진 다른 계정을 지웠다(`lib/auth.ts`의 `studentKey` 주석).
+   */
+  await saveStudent(chargeRender(student));
 
   return NextResponse.json({ projectId: project.id, jobId: job.id, status: 'queued' });
 }

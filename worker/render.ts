@@ -1,7 +1,10 @@
 import { bundle } from '@remotion/bundler';
 import { renderMedia, selectComposition } from '@remotion/renderer';
+import { copyFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { appPublicDir } from '../lib/paths';
+import { clipartAssetKey, type ClipartEntry } from '../lib/clipart';
+import { presetDir } from '../lib/clipart-preset';
 import type { ReelProps } from '@studio/video/src/types';
 
 let bundlePromise: Promise<string> | null = null;
@@ -33,6 +36,45 @@ function getBundle(): Promise<string> {
     symlinkPublicDir: true,
   });
   return bundlePromise;
+}
+
+/**
+ * 이번 릴스에 실제로 쓰인 클립아트만 렌더 publicDir로 옮긴다.
+ *
+ * **두 source는 대칭이 아니다.**
+ * - `preset`: `file`이 운영자 프리셋 디렉터리(`presetDir()`) 기준 상대 경로다. 그 디렉터리는
+ *   `public/` 밖에 있어 렌더러가 닿지 못하고, 118MB라 저장소에 넣을 수도 없다. 여기서
+ *   옮기는 것은 **이 경우뿐이다.**
+ * - `student`: `file`이 `ArtifactStore.publish`가 돌려준 값이다 — 배포에서는 절대 Blob URL,
+ *   로컬에서는 public 루트 기준 상대 경로. 둘 다 이미 도달 가능하므로 복사할 원본 자체가
+ *   없다. 굳이 복사하려 들면 프리셋 디렉터리에서 엉뚱한 이름을 찾다 조용히 실패한다.
+ *
+ * 원본이 없거나 읽히지 않으면 건너뛴다. 캐릭터가 빠진 릴스는 괜찮은 릴스지만, 렌더가
+ * 실패한 릴스는 아무것도 아니다 — 무게가 다르다. 한 항목이 실패해도 나머지는 계속 옮긴다.
+ *
+ * **실제로 쓴 키만 돌려준다. 그리고 그 목록을 호출자가 반드시 써야 한다.** 조용히 건너뛰고
+ * 끝내면 씬은 아무도 쓰지 않은 파일을 계속 가리키고, 렌더러는 프레임마다 404를 두 번
+ * 재시도한 뒤(`<Img>`의 기본 동작) 렌더를 중단한다. "조용히 건너뛴다"가 "조용히 렌더를
+ * 죽인다"가 되는 지점이 여기였다 — `lib/pipeline/scenes.ts`의 `dropUncopiedCharacters`가
+ * 이 반환값으로 못 쓰는 주소를 씬에서 뗀다.
+ */
+export async function copyClipart(entries: ClipartEntry[], publicDir: string): Promise<string[]> {
+  const copied: string[] = [];
+  for (const entry of entries) {
+    // 수강생 이미지는 publish가 이미 도달 가능하게 뒀다. 복사할 원본이 없을 뿐이지
+    // 못 쓰는 주소라는 뜻이 아니므로, 여기 목록에 없는 것이 곧 실패는 아니다.
+    if (entry.source !== 'preset') continue;
+    const key = clipartAssetKey(entry);
+    try {
+      const target = path.join(publicDir, key);
+      await mkdir(path.dirname(target), { recursive: true });
+      await copyFile(path.join(presetDir(), entry.file), target);
+      copied.push(key);
+    } catch {
+      // 원본 없음 — 이 씬은 캐릭터 없이 렌더된다
+    }
+  }
+  return copied;
 }
 
 export async function renderReel(props: ReelProps, outPath: string): Promise<void> {

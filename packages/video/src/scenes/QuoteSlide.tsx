@@ -3,7 +3,15 @@ import { AbsoluteFill, Img, spring, useCurrentFrame, useVideoConfig, interpolate
 import type { Palette, QuoteScene } from '../types';
 import { SPRING_PRESETS, getEntryExitOpacity, getExitBlur, getEntryExitScale } from '../utils/animations';
 
-export const QuoteSlide: React.FC<{ scene: QuoteScene; palette: Palette }> = ({ scene, palette }) => {
+export const QuoteSlide: React.FC<{
+  scene: QuoteScene; palette: Palette;
+  /**
+   * 배경 위, 본문 글자 아래에 그릴 레이어 (캐릭터 오버레이).
+   * 이 씬이 루트에 건 `scale` 배율을 넘겨준다 — 받는 쪽이 그걸 되돌려 프레임 좌표에
+   * 그대로 앉을 수 있도록. 씬 글자에 걸린 변형은 그대로 두고 이 슬롯만 면제하는 방법이다.
+   */
+  underlay?: (sceneScale: number) => React.ReactNode;
+}> = ({ scene, palette, underlay }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const sceneFrame = frame - Math.round(scene.startTime * fps);
@@ -38,6 +46,10 @@ export const QuoteSlide: React.FC<{ scene: QuoteScene; palette: Palette }> = ({ 
           background: `radial-gradient(ellipse at center, ${accent}25 0%, ${palette.paper}f2 70%)`,
         }} />
       )}
+
+      {/* 배경과 본문 **사이**. 캐릭터가 여기 들어가야 본문 글자가 캐릭터를 덮는다 —
+          겹치면 잃는 쪽이 캐릭터여야지 글자여서는 안 된다. SceneRouter 주석 참고. */}
+      {underlay?.(exitScale)}
 
       <div style={{
         position: 'relative',

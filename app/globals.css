@@ -2055,3 +2055,293 @@ button {
   background: var(--acid); color: var(--bg); font-weight: 700; cursor: pointer; }
 .loginCard button:disabled { opacity: .5; cursor: default; }
 .loginError { color: var(--pink); font-size: 13px; }
+
+/* ---------------------------------------------------------------------------
+   기본 캐릭터 안내 · 내 캐릭터 업로드
+
+   색 리터럴을 쓰지 않는다. 이 파일은 색 가드 테스트 범위 밖이라 새 리터럴을 넣어도
+   아무도 막지 못하므로 사람이 지켜야 한다. 투명도가 필요한 자리는 새 rgba()를 짓지 않고
+   `color-mix`로 기존 토큰을 섞는다 — 그래야 토큰이 바뀔 때 이 블록도 같이 따라온다.
+
+   안내에 `--pink`를 쓰는 이유: 이 패널의 `--acid`는 "됐다/완료"를 뜻하는 색이라
+   (`.readyChecklist .done`, `.learningHeader`) 같은 색으로 칠하면 "기본 캐릭터가 쓰인다"가
+   안심 신호로 읽힌다. 정확히 반대로 읽혀야 하는 안내다.
+--------------------------------------------------------------------------- */
+
+.characterPanel {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 12px;
+}
+
+.presetCharacterNotice {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--pink);
+  border-radius: 15px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--pink) 14%, transparent), transparent),
+    var(--panel);
+}
+
+.presetCharacterFlag {
+  justify-self: start;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--pink);
+  color: var(--panel);
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.presetCharacterNotice strong {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+.presetCharacterNotice p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.presetCharacterNotice small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.presetCharacterKeywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.presetCharacterKeywords span {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.presetCharacterKeywords .more {
+  border-color: transparent;
+  background: transparent;
+}
+
+.myCharacterList {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--acid) 28%, transparent);
+  border-radius: 15px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--acid) 7%, transparent), transparent),
+    var(--panel);
+}
+
+.myCharacterHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.myCharacterHeader span {
+  color: var(--acid);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.myCharacterHeader strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.myCharacterList p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.myCharacterList ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.myCharacterList li {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+
+.myCharacterList li img {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  object-fit: contain;
+}
+
+.myCharacterList li div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.myCharacterList li strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.myCharacterList li span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+  분류 칩. 비슷한 말 줄과 같은 회색으로 두면 두 줄이 한 덩어리로 읽혀 무엇이 분류인지
+  구별되지 않는다. 목록 헤더가 쓰는 강조색을 그대로 빌려 낱말 하나짜리 꼬리표로 세운다.
+  부모가 grid라 `justify-self: start`가 있어야 칩이 줄 전체로 늘어나지 않는다.
+*/
+.myCharacterList li span.myCharacterCategory {
+  justify-self: start;
+  max-width: 100%;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--acid) 30%, transparent);
+  border-radius: 999px;
+  color: var(--acid);
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.characterUpload {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--panel);
+}
+
+.characterUpload > strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.characterFilePick {
+  display: grid;
+  min-height: 40px;
+  margin-top: 4px;
+  place-items: center;
+  border: 1px dashed color-mix(in srgb, var(--ink) 22%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.characterFilePick input {
+  display: none;
+}
+
+.characterFilePick span {
+  overflow: hidden;
+  max-width: 100%;
+  padding: 0 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.characterHint {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.characterField {
+  display: grid;
+  gap: 4px;
+}
+
+.characterField > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.characterField input {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.characterField input::placeholder {
+  color: var(--muted);
+}
+
+.characterUploadButton {
+  min-height: 38px;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--acid);
+  color: var(--panel);
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.characterUploadButton:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.characterError {
+  margin: 4px 0 0;
+  color: var(--pink);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.characterDone {
+  margin: 4px 0 0;
+  color: var(--acid);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}

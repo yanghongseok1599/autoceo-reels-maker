@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { findActiveScene, renderScene, withReelBackground } from '../scenes/SceneRouter';
+import {
+  characterRunStart, findActiveScene, renderScene, withReelBackground,
+} from '../scenes/SceneRouter';
 import type { SceneDirective } from '../types';
 import { FALLBACK_PALETTE, SCENE_TYPES } from '../types';
 
@@ -77,5 +79,38 @@ describe('withReelBackground', () => {
   it('leaves the scene alone when there is no reel background either', () => {
     expect(withReelBackground(sample.title_card, undefined)).toBe(sample.title_card);
     expect(withReelBackground(sample.title_card, undefined).backgroundImageUrl).toBeUndefined();
+  });
+});
+
+/**
+ * 캐릭터 등장 모션의 기준 시각. 씬마다 새로 잡으면 릴 전체에 같은 캐릭터를 붙였을 때
+ * 씬 경계마다 캐릭터가 깜빡인다 — 그래서 "그림이 바뀐 시점"을 기준으로 삼는다.
+ */
+describe('characterRunStart', () => {
+  const run: SceneDirective[] = [
+    { type: 'title_card', startTime: 0, endTime: 3, title: 'ㄱ', characterImageUrl: 'a.png' },
+    { type: 'title_card', startTime: 3, endTime: 6, title: 'ㄴ', characterImageUrl: 'a.png' },
+    { type: 'title_card', startTime: 6, endTime: 9, title: 'ㄷ', characterImageUrl: 'b.png' },
+    { type: 'title_card', startTime: 9, endTime: 12, title: 'ㄹ' },
+    { type: 'title_card', startTime: 12, endTime: 15, title: 'ㅁ', characterImageUrl: 'b.png' },
+  ];
+
+  it('keeps the first appearance as the anchor while the image repeats', () => {
+    expect(characterRunStart(run, 0)).toBe(0);
+    expect(characterRunStart(run, 1)).toBe(0);
+  });
+
+  it('re-anchors when the image changes', () => {
+    expect(characterRunStart(run, 2)).toBe(6);
+  });
+
+  /** 중간에 캐릭터 없는 씬이 끼면 같은 그림이라도 다시 등장하는 게 맞다 */
+  it('re-anchors after a gap with no character', () => {
+    expect(characterRunStart(run, 4)).toBe(12);
+  });
+
+  it('returns 0 for an index that is not there', () => {
+    expect(characterRunStart(run, -1)).toBe(0);
+    expect(characterRunStart([], 0)).toBe(0);
   });
 });

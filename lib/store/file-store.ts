@@ -31,7 +31,11 @@ export const fileStore: Store & { kind: 'file' } = {
   },
 };
 
+/**
+ * `projects`는 더 이상 지울 배열이 아니다 — 프로젝트는 이제 `projects/<id>`처럼
+ * 자기 키에 하나씩 들어간다. 빈 배열을 다시 써 두면 실제로는 아무도 읽지 않는 키가
+ * 남아, 아직 배열인 척하는 것처럼 보인다.
+ */
 export async function resetStoreForTests(): Promise<void> {
   await fileStore.write('jobs', []);
-  await fileStore.write('projects', []);
 }

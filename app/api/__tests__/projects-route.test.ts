@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { POST as createRoute } from '../projects/route';
 import { signSession, type StudentAccount } from '@/lib/auth';
 import { store } from '@/lib/store';
 import { resetStoreForTests } from '@/lib/store/file-store';
 import { upsertFishVoice, type FishVoiceProfile } from '@/lib/fish-voice-store';
-import { getProject, type Project } from '@/lib/projects';
+import { getProject } from '@/lib/projects';
 import type { RenderJob } from '@/lib/jobs';
 
 const student = (id: string): StudentAccount => ({
@@ -100,7 +102,13 @@ describe('POST /api/projects — voice ownership', () => {
     await upsertFishVoice(voice('theirs', 'u2'));
     await create({ script: '대본', voiceReferenceId: 'theirs' }, 'u1');
 
-    expect(await store.read<Project[]>('projects', [])).toEqual([]);
+    /**
+     * 프로젝트는 이제 `projects/<id>`처럼 하나씩 저장되고, 목록을 훑는 경로가 일부러 없다.
+     * 그래서 "하나도 안 만들어졌다"를 `store`로는 물어볼 수 없어 저장 디렉터리를 직접 본다.
+     * 예전처럼 `store.read('projects', [])`로 확인하면 없는 키의 fallback을 받아
+     * 무엇을 만들었든 항상 통과하는 빈 검사가 된다.
+     */
+    expect(existsSync(path.join(process.env.STORE_DIR!, 'projects'))).toBe(false);
     expect(await store.read<RenderJob[]>('jobs', [])).toEqual([]);
     const students = await store.read<StudentAccount[]>('students', []);
     expect(students.find((s) => s.id === 'u1')?.monthlyRenderCount).toBe(0);

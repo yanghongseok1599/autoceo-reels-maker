@@ -45,12 +45,20 @@ export interface Project {
   scenes: SceneDirective[] | null; resultUrl: string | null; createdAt: string;
 }
 
-const KEY = 'projects';
+/**
+ * 프로젝트는 자기 id로만 조회된다(`app/api/jobs/next/route.ts`). 목록을 훑는 곳이 없으므로
+ * 인덱스도 두지 않는다 — 인덱스를 두면 그 인덱스가 다시 하나의 배열이 되어, 지금 고치는
+ * 덮어쓰기 문제를 그대로 되살린다.
+ *
+ * 예전에는 모든 프로젝트가 `projects` 배열 하나에 들어 있었다. 만들 때마다 배열 전체를
+ * 읽어-수정-쓰기 때문에, 두 수강생이 동시에 만들면 나중에 쓴 쪽이 앞사람 것을 지웠다.
+ * 키를 프로젝트마다 나누면 두 쓰기가 서로 다른 파일로 가서 겹칠 일이 없다.
+ */
+const projectKey = (id: string) => `projects/${id}`;
 
 export async function createProject(
   input: { ownerId: string; script: string; voiceReferenceId: string },
 ): Promise<Project> {
-  const projects = await store.read<Project[]>(KEY, []);
   const project: Project = {
     id: `proj_${crypto.randomUUID().replaceAll('-', '').slice(0, 16)}`,
     ownerId: input.ownerId, engine: 'remotion', script: input.script,
@@ -58,10 +66,10 @@ export async function createProject(
     audioUrl: null, subtitles: null, scenes: null, resultUrl: null,
     createdAt: new Date().toISOString(),
   };
-  await store.write(KEY, [project, ...projects]);
+  await store.write(projectKey(project.id), project);
   return project;
 }
 
 export async function getProject(id: string): Promise<Project | null> {
-  return (await store.read<Project[]>(KEY, [])).find((p) => p.id === id) ?? null;
+  return await store.read<Project | null>(projectKey(id), null);
 }

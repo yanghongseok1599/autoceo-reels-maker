@@ -4,8 +4,14 @@ export type LearnedFormat = "format_a" | "format_d";
 export type LearnedStatus = "processing" | "completed" | "failed";
 export type LearnedFeedback = "good" | "bad";
 
+/**
+ * 학습 기록에는 수강생이 **직접 쓴 대본 본문**이 들어 있고, 인사이트의 `bestPrompt`가 그것을
+ * 그대로 내보낸다. 그러니 `ownerId`는 편의 필드가 아니라 경계다 — 목소리
+ * (`lib/fish-voice-store.ts`)·클립아트(`lib/clipart-store.ts`)와 같은 경계이고 같은 모양으로 지킨다.
+ */
 export type LearningRecord = {
   id: string;
+  ownerId: string;
   jobId: string;
   format: LearnedFormat;
   createdAt: string;
@@ -55,9 +61,22 @@ export type LearningInsights = {
  * 예전에는 이 모듈이 `.local-data/learning-records.json`을 직접 readFile/writeFile 했다.
  * Vercel의 파일시스템은 읽기 전용이라 배포하면 기록이 조용히 사라지고 인사이트는 늘
  * 비어 있었다 — `fish-voices`가 겪었던 것과 같은 고장이다. 저장소 선택은 `lib/store`에 맡긴다.
- * 키를 `learning-records`로 두면 파일 구현이 쓰는 경로가 예전과 같아 로컬 기록이 그대로 이어진다.
  */
-const KEY = "learning-records";
+
+/**
+ * 소유자당 키 하나. 예전에는 모든 수강생의 기록이 `learning-records` 배열 하나에 있었고,
+ * 그게 두 가지를 한꺼번에 고장 냈다.
+ *
+ * 하나는 누출이다. `getLearningInsights`가 그 배열 전체에서 `best`를 골라 `bestPrompt`로
+ * 대본 본문을 돌려줬으니, 아무나 자기 인사이트를 열어 남의 대본을 읽었다.
+ * 다른 하나는 덮어쓰기다. 저장이 배열 전체를 읽고 고쳐 다시 쓰는 일이라, 두 수강생이 같은
+ * 순간에 저장하면 나중에 쓴 쪽이 앞선 쪽의 기록을 통째로 지웠다.
+ *
+ * 키를 나누면 겹칠 자리 자체가 없고, 남의 기록은 애초에 읽히지 않는다. 300건 상한도
+ * 전체가 아니라 사람마다로 바뀐다 — 예전에는 활발한 수강생 한 명이 다른 사람들의 기록을
+ * 상한 밖으로 밀어냈다.
+ */
+const keyFor = (ownerId: string) => `learning-records/${ownerId}`;
 
 /**
  * 처방을 내보내기 전에 필요한 최소 **평가** 건수.
@@ -81,24 +100,43 @@ function createLearningId() {
   return `learn_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
 }
 
-async function readRecords(): Promise<LearningRecord[]> {
-  const records = await store.read<LearningRecord[]>(KEY, []);
+/**
+ * 그 소유자의 키에 들어 있는 것 전부. 소유자가 빈 값이면 전부가 아니라 아무것도 아니다 —
+ * `learning-records/`라는 아무의 것도 아닌 자리를 읽어 그걸 누군가의 기록처럼 다루면 안 된다.
+ *
+ * 쓰기 경로는 이 함수를 쓴다. 아래 `readOwned`의 필터를 통과한 목록을 그대로 다시 쓰면,
+ * 어쩌다 이 키에 섞여 든 남의 기록을 조용히 **지우게** 된다. 경계는 안 보이게 하는 것이지
+ * 지우는 것이 아니다.
+ */
+async function readRecords(ownerId: string): Promise<LearningRecord[]> {
+  if (!ownerId) return [];
+  const records = await store.read<LearningRecord[]>(keyFor(ownerId), []);
   return Array.isArray(records) ? records : [];
 }
 
-async function writeRecords(records: LearningRecord[]) {
-  await store.write(KEY, records);
+/**
+ * 읽기 경로가 쓰는 목록. 키가 이미 소유자를 나누지만 선가드와 `ownerId` 필터를 둘 다 남긴다.
+ * 방어가 한 겹뿐이면 나중에 키 구조를 바꿀 때 경계가 조용히 열린다 — 그리고 여기서 열리는
+ * 경계는 남의 대본 본문이다.
+ */
+async function readOwned(ownerId: string): Promise<LearningRecord[]> {
+  return (await readRecords(ownerId)).filter((record) => record.ownerId === ownerId);
+}
+
+async function writeRecords(ownerId: string, records: LearningRecord[]) {
+  await store.write(keyFor(ownerId), records);
 }
 
 function uniqueCompact(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
-export async function createLearningRecord(input: LearningInput) {
+export async function createLearningRecord(input: LearningInput & { ownerId: string }) {
   const now = new Date().toISOString();
-  const records = await readRecords();
+  const records = await readRecords(input.ownerId);
   const record: LearningRecord = {
     id: createLearningId(),
+    ownerId: input.ownerId,
     jobId: input.jobId,
     format: input.format,
     createdAt: now,
@@ -117,35 +155,50 @@ export async function createLearningRecord(input: LearningInput) {
     referenceNames: uniqueCompact(input.referenceNames ?? []),
   };
 
-  await writeRecords([record, ...records].slice(0, 300));
+  await writeRecords(input.ownerId, [record, ...records].slice(0, 300));
   return record;
 }
 
+/**
+ * `ownerId`가 첫 인자인 것은 서명을 다듬은 결과가 아니다. id는 클라이언트가 보내는 값이라
+ * 그것만으로 고르면 남의 기록에 평가를 남길 수 있다. 소유자가 함께 있어야 고를 수 있다.
+ *
+ * 대상이 없으면 아무것도 쓰지 않고 `null`을 돌려준다. 부르는 쪽은 그걸 404로 옮긴다 —
+ * "없음"과 "남의 것"을 구별해서 알려 줄 이유가 없다.
+ */
 export async function updateLearningRecord(
+  ownerId: string,
   id: string,
   patch: Partial<Pick<LearningRecord, "status" | "resultUrl" | "feedback">>,
 ) {
-  const records = await readRecords();
-  const nextRecords = records.map((record) =>
-    record.id === id
-      ? {
-          ...record,
-          ...patch,
-          updatedAt: new Date().toISOString(),
-        }
-      : record,
-  );
-  await writeRecords(nextRecords);
-  return nextRecords.find((record) => record.id === id) ?? null;
+  // 빈 소유자 선가드는 `readRecords` 한 곳에만 둔다. 같은 검사를 여기 한 번 더 적으면
+  // 지워도 아무 검사가 실패하지 않는 방어가 되고, 그런 방어는 언젠가 지워진다.
+  const records = await readRecords(ownerId);
+  const index = records.findIndex((record) => record.id === id && record.ownerId === ownerId);
+  if (index < 0) return null;
+
+  const updated: LearningRecord = {
+    ...records[index],
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+  await writeRecords(ownerId, records.map((record, i) => (i === index ? updated : record)));
+  return updated;
 }
 
-export async function findLearningRecordByJobId(jobId: string) {
-  const records = await readRecords();
-  return records.find((record) => record.jobId === jobId) ?? null;
+export async function findLearningRecordByJobId(ownerId: string, jobId: string) {
+  return (await readOwned(ownerId)).find((record) => record.jobId === jobId) ?? null;
 }
 
-export async function getLearningInsights(format: LearnedFormat): Promise<LearningInsights> {
-  const records = (await readRecords()).filter((record) => record.format === format);
+/**
+ * 세는 대상이 그 수강생의 기록으로 좁혀진다. 문턱(`RECOMMENDATION_MIN_SAMPLES`)과 두 분기는
+ * 그대로다 — 바뀐 것은 **누구의 평가를 세는가**뿐이다.
+ */
+export async function getLearningInsights(
+  ownerId: string,
+  format: LearnedFormat,
+): Promise<LearningInsights> {
+  const records = (await readOwned(ownerId)).filter((record) => record.format === format);
   const completed = records.filter((record) => record.status === "completed");
   const goodRecords = records.filter((record) => record.feedback === "good");
   const badRecords = records.filter((record) => record.feedback === "bad");

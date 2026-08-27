@@ -15,9 +15,9 @@ beforeEach(() => {
   // 업로드가 저장소의 실제 public/으로 새어 나가지 않게 한다.
   publicDir = mkdtempSync(path.join(os.tmpdir(), 'reels-public-'));
   process.env.PUBLIC_DIR = publicDir;
-  // 프리셋 디렉터리는 운영자 기계에만 있다. 빈 곳을 가리켜서 테스트가 그 기계의 실제
-  // 라이브러리 내용에 따라 달라지지 않게 한다.
-  process.env.CLIPART_PRESET_DIR = mkdtempSync(path.join(os.tmpdir(), 'clipart-preset-'));
+  // 프리셋 카탈로그는 저장소에 커밋돼 있다(`data/preset-clipart-catalog.json`). 그래서 이
+  // 검사는 운영자 Codex 스킬 디렉터리가 있든 없든 같은 답을 본다 — `CLIPART_PRESET_DIR`은
+  // 이제 워커가 그림 바이트를 찾는 데만 쓰이므로 여기서 가리킬 곳이 없다.
 });
 
 function req(method: string, ownerId?: string, body?: BodyInit) {

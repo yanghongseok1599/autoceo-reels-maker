@@ -1,20 +1,31 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { addStudentClipart, listStudentClipart, catalogFor, newClipartId } from '../clipart-store';
+import { PRESET_OWNER_ID } from '../clipart-preset';
+import type { ClipartEntry } from '../clipart';
+
+/**
+ * 프리셋 카탈로그를 여기서 직접 정한다. **실측 카탈로그(104건)를 그대로 쓰면 이 파일의
+ * 검사가 운영자가 캐릭터를 하나 추가할 때마다 흔들린다** — 여기서 볼 것은 카탈로그의 내용이
+ * 아니라 `catalogFor`의 경계(내 것이 있으면 프리셋을 섞지 않는다)이기 때문이다.
+ *
+ * 커밋된 실제 카탈로그가 이 경로를 타고 앱·워커 양쪽에 같은 모양으로 도착하는지는
+ * `lib/__tests__/preset-catalog-agreement.test.ts`가 모의 없이 확인한다.
+ */
+const preset = vi.hoisted(() => ({ entries: [] as unknown[] }));
+
+vi.mock('../clipart-preset', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../clipart-preset')>()),
+  loadPresetClipart: () => Promise.resolve(preset.entries),
+}));
 
 function seedPreset(entries: { keyword: string; aliases: string[] }[]) {
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'clipart-preset-'));
-  mkdirSync(path.join(dir, 'assets', 'clipart'), { recursive: true });
-  writeFileSync(path.join(dir, 'assets', 'catalog.json'), JSON.stringify({
-    items: entries.map((e) => ({
-      keyword: e.keyword, aliases: e.aliases, category: '감정',
-      file: `assets/clipart/${e.keyword}.png`, status: 'ready',
-    })),
+  preset.entries = entries.map((e): ClipartEntry => ({
+    id: `preset:${e.keyword}`, ownerId: PRESET_OWNER_ID, keyword: e.keyword,
+    aliases: e.aliases, category: '감정', source: 'preset',
+    file: `assets/clipart/${e.keyword}.png`,
   }));
-  process.env.CLIPART_PRESET_DIR = dir;
 }
 
 /**
@@ -65,8 +76,10 @@ describe('catalogFor', () => {
     expect(entries.map((e) => e.keyword)).toEqual(['기쁨']);
   });
 
+  // `usingPreset`의 뜻은 "내 것이 아니다"이지 "프리셋이 실제로 들어 있다"가 아니다.
+  // 프리셋이 비어도 안내는 떠야 한다 — 그래야 수강생이 발행 전에 알아챈다.
   it('reports an empty catalog when there is no preset either', async () => {
-    process.env.CLIPART_PRESET_DIR = path.join(os.tmpdir(), 'does-not-exist-' + Date.now());
+    seedPreset([]);
     const { entries, usingPreset } = await catalogFor('u1');
     expect(entries).toEqual([]);
     expect(usingPreset).toBe(true);

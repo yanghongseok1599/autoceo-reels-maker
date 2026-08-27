@@ -12,7 +12,8 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "studio": "npm -w @studio/video run studio"
+    "studio": "npm -w @studio/video run studio",
+    "sync:preset-catalog": "npx tsx scripts/sync-preset-catalog.ts"
   },
   "dependencies": {
     "@types/node": "^20.12.12",

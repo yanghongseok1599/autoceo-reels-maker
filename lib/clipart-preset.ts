@@ -1,7 +1,7 @@
-import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { MIN_TERM_LENGTH, type ClipartEntry } from './clipart';
+import committedCatalog from '../data/preset-clipart-catalog.json';
 
 /**
  * 프리셋 항목의 `ownerId`. 사람이 아니라 자리표시자다 — "아무 수강생의 것도 아니다"라는 뜻이다.
@@ -10,14 +10,15 @@ import { MIN_TERM_LENGTH, type ClipartEntry } from './clipart';
 export const PRESET_OWNER_ID = '__preset__';
 
 /**
- * 운영자 프리셋 라이브러리의 위치.
+ * 운영자 프리셋 **그림 파일**의 위치. 카탈로그(무엇이 있는지)는 여기서 읽지 않는다 —
+ * 아래 `loadPresetClipart` 주석에 이유를 적어 뒀다.
  *
- * **이 디렉터리는 워커가 도는 기계에만 있다.** 그림 파일이 운영자의 Codex 스킬 디렉터리
- * (`~/.codex/skills/character-clipart-library`)에 들어 있고 118MB라 저장소에 커밋하지
- * 않았기 때문이다. 워커를 다른 기계(또는 Vercel 함수)로 옮기면 이 경로에 아무것도 없고
- * `loadPresetClipart()`는 조용히 `[]`를 돌려준다. 고장으로 보이지 않는다 — 자기 캐릭터를
- * 올리지 않은 수강생의 릴스에서 캐릭터만 사라진다. 옮길 때는 디렉터리를 함께 복사하거나
- * 아티팩트 저장소로 올리고 `CLIPART_PRESET_DIR`를 그쪽으로 맞춘다.
+ * 그림 파일은 운영자의 Codex 스킬 디렉터리(`~/.codex/skills/character-clipart-library`)에
+ * 들어 있고 118MB라 저장소에 커밋하지 않았다. **이 디렉터리는 워커가 도는 기계에만 있다.**
+ * 쓰는 곳은 한 곳뿐이다: `worker/render.ts`의 `copyClipart`가 `presetDir()`에 항목의
+ * `file`(프리셋 디렉터리 기준 상대 경로)을 이어 붙여 원본 바이트를 렌더 publicDir로 옮긴다.
+ * 워커를 다른 기계로 옮기면 디렉터리를 함께 복사하고 `CLIPART_PRESET_DIR`를 그쪽으로 맞춘다.
+ * 원본이 없으면 그 항목은 조용히 건너뛰고 캐릭터 없이 렌더된다(`copyClipart` 주석).
  *
  * 호출 시점에 읽는다. 모듈 로드 시점에 고정하면 테스트가 임시 디렉터리를 가리킬 수 없다
  * (`lib/store/file-store.ts`가 `STORE_DIR`에 같은 이유로 같은 모양을 쓴다).
@@ -94,21 +95,17 @@ function itemsOf(raw: unknown): unknown[] {
 }
 
 /**
- * 운영자 프리셋 카탈로그를 `ClipartEntry[]`로 읽는다.
+ * 운영자 프리셋 카탈로그를 `ClipartEntry[]`로 손질한다. 순수 함수다 — 파일도 환경변수도
+ * 보지 않는다. 프리셋의 규칙(ready만·두 글자 이상·솎아 낸 별칭)은 **전부 여기 있다.**
+ * 동기화 스크립트는 이 규칙을 한 번도 적용하지 않으므로, 규칙이 두 번 걸리거나 한 번도
+ * 안 걸리는 상태가 생기지 않는다.
  *
- * 없거나 깨졌으면 `[]`다. 던지지 않는 이유: 캐릭터가 빠지는 것과 릴스가 안 나오는 것은
- * 무게가 다르다. 프리셋은 대타이므로 대타가 없으면 그냥 캐릭터 없이 간다.
+ * 깨진 입력에 던지지 않는 이유: 캐릭터가 빠지는 것과 릴스가 안 나오는 것은 무게가 다르다.
+ * 프리셋은 대타이므로 대타가 없으면 그냥 캐릭터 없이 간다.
  *
  * `status`가 `ready`인 것만 쓴다 — `pending`은 그림 파일이 아직 없다.
  */
-export async function loadPresetClipart(): Promise<ClipartEntry[]> {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(await readFile(path.join(presetDir(), 'assets', 'catalog.json'), 'utf8'));
-  } catch {
-    return [];
-  }
-
+export function parsePresetCatalog(raw: unknown): ClipartEntry[] {
   const entries: ClipartEntry[] = [];
   for (const item of itemsOf(raw)) {
     if (!item || typeof item !== 'object') continue;
@@ -134,4 +131,34 @@ export async function loadPresetClipart(): Promise<ClipartEntry[]> {
     });
   }
   return entries;
+}
+
+/**
+ * 이 수강생의 릴스에 쓰일 운영자 프리셋 카탈로그.
+ *
+ * **저장소에 커밋된 `data/preset-clipart-catalog.json`을 정적으로 import 한다. 파일시스템도
+ * `CLIPART_PRESET_DIR`도 보지 않는다.** 이 함수를 부르는 프로세스가 둘이기 때문이다:
+ * 앱(Vercel)의 `GET /api/clipart`가 수강생에게 "이 낱말이 캐릭터를 부릅니다"라고 말하고,
+ * 워커(운영자 맥)의 `remotionEngine.produce`가 실제로 그 캐릭터를 릴스에 넣는다.
+ *
+ * 예전에는 양쪽이 각자 `presetDir()/assets/catalog.json`을 읽었다. 개발 기계에서는 같은
+ * 파일이라 맞았지만 **배포에서는 갈라졌다**: 앱은 `{"entries":[],"usingPreset":true}`를
+ * 돌려주며 "어떤 낱말이 캐릭터를 부르는지" 칩을 하나도 못 띄우는데, 같은 대본으로 만든
+ * 릴스에는 워커가 자기 디스크에서 읽은 운영자 캐릭터 세 개가 그대로 들어갔다
+ * (`task-7-report.md`의 F1 — 실제로 재현했다). 수강생은 캐릭터가 나온다는 사실조차
+ * 듣지 못한 채 남의 얼굴이 든 릴스를 받는다.
+ *
+ * 그림 파일(118MB)은 여전히 워커 기계에만 있다. **나뉘는 지점은 바이트와 메타데이터다** —
+ * 메타데이터는 작으므로 커밋해서 양쪽이 같은 답을 하고, 바이트는 워커가 `presetDir()`에
+ * 항목의 `file`을 이어 붙여 계속 자기 디스크에서 찾는다.
+ *
+ * 정적 import인 이유: `readFile`로 저장소 경로를 읽으면 Vercel 함수 번들에 그 파일이
+ * 딸려 갈 보장이 없어(경로가 정적 분석되지 않는다) 배포에서만 다시 빈 카탈로그가 된다.
+ * import는 번들러가 반드시 포함시키고, 카탈로그가 깨져 있으면 배포가 아니라 빌드가 깨진다.
+ *
+ * 비동기 서명을 유지한다. 호출자(`catalogFor`)는 저장소를 함께 읽으므로 여기만 동기로
+ * 바꿔 봐야 얻는 게 없고, 서명이 바뀌면 부르는 자리를 모두 건드려야 한다.
+ */
+export async function loadPresetClipart(): Promise<ClipartEntry[]> {
+  return parsePresetCatalog(committedCatalog);
 }

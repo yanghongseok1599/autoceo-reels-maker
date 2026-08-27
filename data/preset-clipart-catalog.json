@@ -1,0 +1,1386 @@
+{
+  "note": "scripts/sync-preset-catalog.ts가 생성합니다. 손으로 고치지 마세요.",
+  "source": "character-clipart-library/assets/catalog.json",
+  "items": [
+    {
+      "keyword": "걱정",
+      "aliases": [
+        "불안",
+        "고민",
+        "걱정하다",
+        "근심",
+        "worried"
+      ],
+      "category": "감정",
+      "file": "assets/clipart/걱정.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "기쁨",
+      "aliases": [
+        "행복",
+        "신남",
+        "즐거움",
+        "기쁘다",
+        "happy"
+      ],
+      "category": "감정",
+      "file": "assets/clipart/기쁨.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "놀람",
+      "aliases": [
+        "깜짝",
+        "충격",
+        "놀라다",
+        "surprised"
+      ],
+      "category": "감정",
+      "file": "assets/clipart/놀람.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "당황",
+      "aliases": [
+        "난처함",
+        "민망",
+        "당황하다",
+        "embarrassed"
+      ],
+      "category": "감정",
+      "file": "assets/clipart/당황.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "분노",
+      "aliases": [
+        "화남",
+        "짜증",
+        "화나다",
+        "angry"
+      ],
+      "category": "감정",
+      "file": "assets/clipart/분노.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "슬픔",
+      "aliases": [
+        "속상함",
+        "우울",
+        "슬프다",
+        "sad"
+      ],
+      "category": "감정",
+      "file": "assets/clipart/슬픔.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "울음",
+      "aliases": [
+        "눈물",
+        "울다",
+        "오열",
+        "crying"
+      ],
+      "category": "감정",
+      "file": "assets/clipart/울음.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "자랑스러움",
+      "aliases": [
+        "뿌듯함",
+        "자부심",
+        "자랑스럽다",
+        "proud"
+      ],
+      "category": "감정",
+      "file": "assets/clipart/자랑스러움.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "자신감",
+      "aliases": [
+        "확신",
+        "당당함",
+        "자신 있다",
+        "confident"
+      ],
+      "category": "감정",
+      "file": "assets/clipart/자신감.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "진지함",
+      "aliases": [
+        "심각",
+        "엄숙",
+        "진지하다",
+        "serious"
+      ],
+      "category": "감정",
+      "file": "assets/clipart/진지함.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "축하",
+      "aliases": [
+        "기념",
+        "파티",
+        "축하하다",
+        "celebrate"
+      ],
+      "category": "감정",
+      "file": "assets/clipart/축하.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "평온",
+      "aliases": [
+        "차분함",
+        "침착",
+        "마음의 평화",
+        "calm"
+      ],
+      "category": "감정",
+      "file": "assets/clipart/평온.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "혼란",
+      "aliases": [
+        "헷갈림",
+        "혼동",
+        "어리둥절",
+        "confused"
+      ],
+      "category": "감정",
+      "file": "assets/clipart/혼란.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "건강",
+      "aliases": [
+        "건강하다",
+        "컨디션",
+        "건강 관리",
+        "health"
+      ],
+      "category": "건강",
+      "file": "assets/clipart/건강.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "과로",
+      "aliases": [
+        "일 과다",
+        "업무 과중",
+        "너무 많이 일함",
+        "overworked"
+      ],
+      "category": "건강",
+      "file": "assets/clipart/과로.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "달리기",
+      "aliases": [
+        "뛰다",
+        "러닝",
+        "전력 질주",
+        "running"
+      ],
+      "category": "건강",
+      "file": "assets/clipart/달리기.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "번아웃",
+      "aliases": [
+        "소진",
+        "탈진",
+        "의욕 상실",
+        "burnout"
+      ],
+      "category": "건강",
+      "file": "assets/clipart/번아웃.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "운동",
+      "aliases": [
+        "헬스",
+        "훈련",
+        "체력",
+        "스포츠",
+        "체력 단련",
+        "exercise"
+      ],
+      "category": "건강",
+      "file": "assets/clipart/운동.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "피곤",
+      "aliases": [
+        "피로",
+        "지침",
+        "힘들다",
+        "tired"
+      ],
+      "category": "건강",
+      "file": "assets/clipart/피곤.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "성공",
+      "aliases": [
+        "달성",
+        "해냈다",
+        "합격",
+        "성취",
+        "success"
+      ],
+      "category": "결과",
+      "file": "assets/clipart/성공.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "실패",
+      "aliases": [
+        "실수",
+        "좌절",
+        "불합격",
+        "failure"
+      ],
+      "category": "결과",
+      "file": "assets/clipart/실패.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "가난",
+      "aliases": [
+        "돈 없음",
+        "빈곤",
+        "궁핍",
+        "poor"
+      ],
+      "category": "경제",
+      "file": "assets/clipart/가난.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "돈",
+      "aliases": [
+        "비용",
+        "가격",
+        "수익",
+        "예산",
+        "절약",
+        "자금",
+        "money"
+      ],
+      "category": "경제",
+      "file": "assets/clipart/돈.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "부자",
+      "aliases": [
+        "부유함",
+        "돈 많음",
+        "재산",
+        "rich"
+      ],
+      "category": "경제",
+      "file": "assets/clipart/부자.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "비쌈",
+      "aliases": [
+        "비싸다",
+        "고가",
+        "부담스러운 가격",
+        "expensive"
+      ],
+      "category": "경제",
+      "file": "assets/clipart/비쌈.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "저렴함",
+      "aliases": [
+        "싸다",
+        "싼 가격",
+        "가성비",
+        "cheap"
+      ],
+      "category": "경제",
+      "file": "assets/clipart/저렴함.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "할인",
+      "aliases": [
+        "세일",
+        "가격 인하",
+        "할인가",
+        "discount"
+      ],
+      "category": "경제",
+      "file": "assets/clipart/할인.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "현금 계산",
+      "aliases": [
+        "돈 세기",
+        "현금 세기",
+        "매출 정산",
+        "cash-counting"
+      ],
+      "category": "경제",
+      "file": "assets/clipart/현금 계산.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "가족",
+      "aliases": [
+        "부모",
+        "아이",
+        "가정"
+      ],
+      "category": "관계",
+      "file": null,
+      "status": "pending"
+    },
+    {
+      "keyword": "감사",
+      "aliases": [
+        "고마움",
+        "고맙다",
+        "감사하다",
+        "thanks"
+      ],
+      "category": "관계",
+      "file": "assets/clipart/감사.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "사과",
+      "aliases": [
+        "미안",
+        "죄송",
+        "용서",
+        "apology"
+      ],
+      "category": "관계",
+      "file": "assets/clipart/사과.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "친구",
+      "aliases": [
+        "우정",
+        "동료",
+        "함께"
+      ],
+      "category": "관계",
+      "file": null,
+      "status": "pending"
+    },
+    {
+      "keyword": "인공지능",
+      "aliases": [
+        "AI",
+        "에이아이",
+        "자동화"
+      ],
+      "category": "기술",
+      "file": null,
+      "status": "pending"
+    },
+    {
+      "keyword": "컴퓨터",
+      "aliases": [
+        "노트북",
+        "인터넷",
+        "온라인",
+        "검색",
+        "PC",
+        "온라인 작업",
+        "computer"
+      ],
+      "category": "기술",
+      "file": "assets/clipart/컴퓨터.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "더위",
+      "aliases": [
+        "덥다",
+        "폭염",
+        "무더위",
+        "hot"
+      ],
+      "category": "날씨",
+      "file": "assets/clipart/더위.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "맑음",
+      "aliases": [
+        "화창",
+        "맑은 날",
+        "햇빛",
+        "sunny"
+      ],
+      "category": "날씨",
+      "file": "assets/clipart/맑음.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "비",
+      "aliases": [
+        "비 오는 날",
+        "우천",
+        "장마",
+        "rain"
+      ],
+      "category": "날씨",
+      "file": "assets/clipart/비.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "추위",
+      "aliases": [
+        "춥다",
+        "한파",
+        "추운 날",
+        "cold"
+      ],
+      "category": "날씨",
+      "file": "assets/clipart/추위.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "거절",
+      "aliases": [
+        "아니요",
+        "안 돼",
+        "반대",
+        "no"
+      ],
+      "category": "메시지",
+      "file": "assets/clipart/거절.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "동의",
+      "aliases": [
+        "예",
+        "찬성",
+        "맞아요",
+        "yes"
+      ],
+      "category": "메시지",
+      "file": "assets/clipart/동의.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "안전",
+      "aliases": [
+        "안심",
+        "보호",
+        "안전하다",
+        "safe"
+      ],
+      "category": "메시지",
+      "file": "assets/clipart/안전.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "위험",
+      "aliases": [
+        "위기",
+        "위험하다",
+        "비상",
+        "danger"
+      ],
+      "category": "메시지",
+      "file": "assets/clipart/위험.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "정지",
+      "aliases": [
+        "멈춤",
+        "중단",
+        "그만",
+        "stop"
+      ],
+      "category": "메시지",
+      "file": "assets/clipart/정지.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "주의",
+      "aliases": [
+        "경고",
+        "조심",
+        "주의하다",
+        "warning"
+      ],
+      "category": "메시지",
+      "file": "assets/clipart/주의.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "확인 완료",
+      "aliases": [
+        "오케이",
+        "OK",
+        "문제없음"
+      ],
+      "category": "메시지",
+      "file": "assets/clipart/확인 완료.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "뉴스",
+      "aliases": [
+        "소식",
+        "보도",
+        "기사",
+        "news"
+      ],
+      "category": "미디어",
+      "file": "assets/clipart/뉴스.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "바이럴",
+      "aliases": [
+        "입소문",
+        "화제",
+        "널리 퍼짐",
+        "viral"
+      ],
+      "category": "미디어",
+      "file": "assets/clipart/바이럴.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "속보",
+      "aliases": [
+        "긴급 뉴스",
+        "브레이킹 뉴스",
+        "긴급 소식",
+        "breaking"
+      ],
+      "category": "미디어",
+      "file": null,
+      "status": "pending"
+    },
+    {
+      "keyword": "촬영",
+      "aliases": [
+        "카메라",
+        "사진",
+        "녹화",
+        "camera"
+      ],
+      "category": "미디어",
+      "file": "assets/clipart/촬영.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "트렌드",
+      "aliases": [
+        "유행",
+        "추세",
+        "요즘 흐름",
+        "trend"
+      ],
+      "category": "미디어",
+      "file": "assets/clipart/트렌드.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "발표",
+      "aliases": [
+        "프레젠테이션",
+        "브리핑",
+        "발표하다",
+        "presentation"
+      ],
+      "category": "비즈니스",
+      "file": "assets/clipart/발표.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "비밀 거래",
+      "aliases": [
+        "은밀한 거래",
+        "뒷거래",
+        "몰래 계약",
+        "secret-deal"
+      ],
+      "category": "비즈니스",
+      "file": "assets/clipart/비밀 거래.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "업무",
+      "aliases": [
+        "일하다",
+        "작업",
+        "직장",
+        "근무",
+        "work"
+      ],
+      "category": "비즈니스",
+      "file": "assets/clipart/업무.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "회의",
+      "aliases": [
+        "미팅",
+        "논의",
+        "협의",
+        "meeting"
+      ],
+      "category": "비즈니스",
+      "file": "assets/clipart/회의.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "선물",
+      "aliases": [
+        "증정",
+        "기프트",
+        "선물하다",
+        "gift"
+      ],
+      "category": "생활",
+      "file": "assets/clipart/선물.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "쇼핑",
+      "aliases": [
+        "구매",
+        "장보기",
+        "물건 사기",
+        "shopping"
+      ],
+      "category": "생활",
+      "file": "assets/clipart/쇼핑.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "수면",
+      "aliases": [
+        "잠",
+        "잠들다",
+        "숙면"
+      ],
+      "category": "생활",
+      "file": null,
+      "status": "pending"
+    },
+    {
+      "keyword": "시간",
+      "aliases": [
+        "일정",
+        "시각",
+        "시간 관리"
+      ],
+      "category": "생활",
+      "file": null,
+      "status": "pending"
+    },
+    {
+      "keyword": "식사",
+      "aliases": [
+        "식사하다",
+        "끼니",
+        "밥 먹기"
+      ],
+      "category": "생활",
+      "file": null,
+      "status": "pending"
+    },
+    {
+      "keyword": "졸림",
+      "aliases": [
+        "졸리다",
+        "하품",
+        "잠이 옴",
+        "sleepy"
+      ],
+      "category": "생활",
+      "file": "assets/clipart/졸림.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "청소",
+      "aliases": [
+        "정리",
+        "쓸다",
+        "깨끗이",
+        "cleaning"
+      ],
+      "category": "생활",
+      "file": "assets/clipart/청소.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "휴식",
+      "aliases": [
+        "쉬다",
+        "여유",
+        "재충전",
+        "드디어 쉼",
+        "편히 쉬다",
+        "finally-rest"
+      ],
+      "category": "생활",
+      "file": "assets/clipart/휴식.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "경청",
+      "aliases": [
+        "듣다",
+        "귀 기울이다",
+        "잘 듣기",
+        "listen"
+      ],
+      "category": "소통",
+      "file": "assets/clipart/경청.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "답변",
+      "aliases": [
+        "대답",
+        "응답",
+        "답하다",
+        "answer"
+      ],
+      "category": "소통",
+      "file": "assets/clipart/답변.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "메시지",
+      "aliases": [
+        "문자",
+        "알림",
+        "메신저",
+        "message"
+      ],
+      "category": "소통",
+      "file": "assets/clipart/메시지.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "부탁",
+      "aliases": [
+        "제발",
+        "요청",
+        "부탁하다",
+        "please"
+      ],
+      "category": "소통",
+      "file": "assets/clipart/부탁.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "불만",
+      "aliases": [
+        "항의",
+        "컴플레인",
+        "불평",
+        "complaint"
+      ],
+      "category": "소통",
+      "file": "assets/clipart/불만.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "비밀",
+      "aliases": [
+        "쉿",
+        "기밀",
+        "숨기다",
+        "secret"
+      ],
+      "category": "소통",
+      "file": "assets/clipart/비밀.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "속삭임",
+      "aliases": [
+        "귓속말",
+        "작게 말하다",
+        "소곤소곤",
+        "whisper"
+      ],
+      "category": "소통",
+      "file": "assets/clipart/속삭임.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "전화",
+      "aliases": [
+        "통화",
+        "연락",
+        "전화하다",
+        "스마트폰 통화",
+        "call"
+      ],
+      "category": "소통",
+      "file": "assets/clipart/전화.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "질문",
+      "aliases": [
+        "물음",
+        "궁금증",
+        "묻다",
+        "question"
+      ],
+      "category": "소통",
+      "file": "assets/clipart/질문.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "느림",
+      "aliases": [
+        "천천히",
+        "느리다",
+        "지연",
+        "slow"
+      ],
+      "category": "속도",
+      "file": "assets/clipart/느림.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "빠름",
+      "aliases": [
+        "신속",
+        "빨리",
+        "속도",
+        "fast"
+      ],
+      "category": "속도",
+      "file": "assets/clipart/빠름.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "기다림",
+      "aliases": [
+        "대기",
+        "기다리다",
+        "순서를 기다림",
+        "waiting"
+      ],
+      "category": "시간",
+      "file": "assets/clipart/기다림.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "밤",
+      "aliases": [
+        "야간",
+        "늦은 시간",
+        "심야",
+        "night"
+      ],
+      "category": "시간",
+      "file": "assets/clipart/밤.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "아침",
+      "aliases": [
+        "기상",
+        "이른 시간",
+        "아침 시간",
+        "morning"
+      ],
+      "category": "시간",
+      "file": "assets/clipart/아침.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "지각",
+      "aliases": [
+        "늦다",
+        "시간 초과",
+        "약속에 늦음",
+        "late"
+      ],
+      "category": "시간",
+      "file": "assets/clipart/지각.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "배고픔",
+      "aliases": [
+        "배고프다",
+        "허기",
+        "공복",
+        "hungry"
+      ],
+      "category": "음식",
+      "file": "assets/clipart/배고픔.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "음식",
+      "aliases": [
+        "먹거리",
+        "요리",
+        "메뉴",
+        "food"
+      ],
+      "category": "음식",
+      "file": "assets/clipart/음식.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "커피",
+      "aliases": [
+        "카페인",
+        "커피 한잔",
+        "아메리카노",
+        "coffee"
+      ],
+      "category": "음식",
+      "file": "assets/clipart/커피.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "여행",
+      "aliases": [
+        "휴가",
+        "관광",
+        "여행하다",
+        "travel"
+      ],
+      "category": "이동",
+      "file": "assets/clipart/여행.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "출발",
+      "aliases": [
+        "떠나다",
+        "출발하다",
+        "출국",
+        "departure"
+      ],
+      "category": "이동",
+      "file": "assets/clipart/출발.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "가게에 혼자",
+      "aliases": [
+        "혼자 가게 지키기",
+        "나홀로 매장",
+        "혼자 근무",
+        "alone-at-shop"
+      ],
+      "category": "자영업",
+      "file": "assets/clipart/가게에 혼자.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "기다리는 고객",
+      "aliases": [
+        "대기 고객",
+        "손님 대기",
+        "오래 기다리는 손님",
+        "waiting-customer"
+      ],
+      "category": "자영업",
+      "file": "assets/clipart/기다리는 고객.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "늦은 마감",
+      "aliases": [
+        "야간 마감",
+        "늦게 퇴근",
+        "마감 지연",
+        "closing-late"
+      ],
+      "category": "자영업",
+      "file": "assets/clipart/늦은 마감.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "마케팅 스트레스",
+      "aliases": [
+        "광고 고민",
+        "홍보 압박",
+        "마케팅 부담",
+        "marketing-stress"
+      ],
+      "category": "자영업",
+      "file": "assets/clipart/마케팅 스트레스.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "매출 하락",
+      "aliases": [
+        "매출 감소",
+        "판매 부진",
+        "매상이 떨어짐",
+        "sales-drop"
+      ],
+      "category": "자영업",
+      "file": "assets/clipart/매출 하락.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "배달 폭주",
+      "aliases": [
+        "배달 주문 폭주",
+        "배송 급증",
+        "배달 바쁨",
+        "delivery-rush"
+      ],
+      "category": "자영업",
+      "file": "assets/clipart/배달 폭주.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "세금 스트레스",
+      "aliases": [
+        "세금 부담",
+        "세금 걱정",
+        "세무 압박",
+        "tax-stress"
+      ],
+      "category": "자영업",
+      "file": "assets/clipart/세금 스트레스.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "손님 없음",
+      "aliases": [
+        "고객 없음",
+        "매장 한산",
+        "손님이 없다",
+        "no-customers"
+      ],
+      "category": "자영업",
+      "file": "assets/clipart/손님 없음.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "악성 리뷰",
+      "aliases": [
+        "나쁜 후기",
+        "별점 테러",
+        "부정 리뷰",
+        "bad-review"
+      ],
+      "category": "자영업",
+      "file": null,
+      "status": "pending"
+    },
+    {
+      "keyword": "임대료 압박",
+      "aliases": [
+        "월세 부담",
+        "가게세",
+        "임대 비용",
+        "rent-pressure"
+      ],
+      "category": "자영업",
+      "file": "assets/clipart/임대료 압박.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "재고 문제",
+      "aliases": [
+        "재고 부족",
+        "재고 관리",
+        "물건 부족",
+        "inventory-problem"
+      ],
+      "category": "자영업",
+      "file": "assets/clipart/재고 문제.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "전화 폭주",
+      "aliases": [
+        "끊임없는 전화",
+        "전화가 계속 옴",
+        "통화 과다",
+        "phone-never-stops"
+      ],
+      "category": "자영업",
+      "file": "assets/clipart/전화 폭주.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "직원 결근",
+      "aliases": [
+        "직원 안 옴",
+        "무단결근",
+        "인력 부족",
+        "staff-no-show"
+      ],
+      "category": "자영업",
+      "file": "assets/clipart/직원 결근.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "품절",
+      "aliases": [
+        "매진",
+        "재고 없음",
+        "다 팔림",
+        "sold-out"
+      ],
+      "category": "자영업",
+      "file": "assets/clipart/품절.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "문제",
+      "aliases": [
+        "문제점",
+        "곤란",
+        "난관",
+        "problem"
+      ],
+      "category": "판단",
+      "file": "assets/clipart/문제.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "비교",
+      "aliases": [
+        "대조",
+        "비교하다",
+        "차이",
+        "compare"
+      ],
+      "category": "판단",
+      "file": "assets/clipart/비교.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "생각",
+      "aliases": [
+        "고민하다",
+        "상상",
+        "생각하다",
+        "사색",
+        "thinking"
+      ],
+      "category": "판단",
+      "file": "assets/clipart/생각.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "선택",
+      "aliases": [
+        "고르다",
+        "결정",
+        "양자택일",
+        "choice"
+      ],
+      "category": "판단",
+      "file": "assets/clipart/선택.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "아이디어",
+      "aliases": [
+        "영감",
+        "번뜩임",
+        "좋은 생각",
+        "idea"
+      ],
+      "category": "판단",
+      "file": "assets/clipart/아이디어.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "의심",
+      "aliases": [
+        "미심쩍음",
+        "못 믿다",
+        "의심하다",
+        "doubt"
+      ],
+      "category": "판단",
+      "file": "assets/clipart/의심.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "해결",
+      "aliases": [
+        "해결책",
+        "정답",
+        "문제 해결",
+        "solution"
+      ],
+      "category": "판단",
+      "file": "assets/clipart/해결.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "최고",
+      "aliases": [
+        "베스트",
+        "가장 좋음",
+        "일등",
+        "best"
+      ],
+      "category": "평가",
+      "file": "assets/clipart/최고.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "최악",
+      "aliases": [
+        "워스트",
+        "가장 나쁨",
+        "끔찍함",
+        "worst"
+      ],
+      "category": "평가",
+      "file": "assets/clipart/최악.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "추천",
+      "aliases": [
+        "권하다",
+        "추천하다",
+        "강력 추천",
+        "recommend"
+      ],
+      "category": "평가",
+      "file": "assets/clipart/추천.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "공부",
+      "aliases": [
+        "학습",
+        "교육",
+        "배우다",
+        "시험",
+        "시험 공부",
+        "study"
+      ],
+      "category": "학교",
+      "file": "assets/clipart/공부.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "바쁨",
+      "aliases": [
+        "정신없음",
+        "바쁘다",
+        "분주함",
+        "busy"
+      ],
+      "category": "행동",
+      "file": "assets/clipart/바쁨.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "설명",
+      "aliases": [
+        "소개",
+        "알려주다",
+        "해설"
+      ],
+      "category": "행동",
+      "file": null,
+      "status": "pending"
+    },
+    {
+      "keyword": "집중",
+      "aliases": [
+        "집중력",
+        "몰입",
+        "정신 집중",
+        "focus"
+      ],
+      "category": "행동",
+      "file": "assets/clipart/집중.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "탈출",
+      "aliases": [
+        "도망",
+        "벗어나다",
+        "회피",
+        "escape"
+      ],
+      "category": "행동",
+      "file": "assets/clipart/탈출.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "마무리",
+      "aliases": [
+        "끝",
+        "종료",
+        "완성",
+        "완료",
+        "끝내다",
+        "완결",
+        "finish"
+      ],
+      "category": "흐름",
+      "file": "assets/clipart/마무리.png",
+      "status": "ready"
+    },
+    {
+      "keyword": "변화",
+      "aliases": [
+        "전환",
+        "바뀌다",
+        "개선"
+      ],
+      "category": "흐름",
+      "file": null,
+      "status": "pending"
+    },
+    {
+      "keyword": "시작",
+      "aliases": [
+        "첫걸음",
+        "개시",
+        "착수",
+        "start"
+      ],
+      "category": "흐름",
+      "file": "assets/clipart/시작.png",
+      "status": "ready"
+    }
+  ]
+}

@@ -1407,8 +1407,20 @@ export default function Home() {
                 <input accept="image/png" onChange={selectCharacterFile} type="file" />
                 <span>{characterFileName || "투명 배경 PNG 고르기"}</span>
               </label>
+              {/*
+                여백 이야기를 여기 적는 이유: 렌더러가 캐릭터를 화면 아래 끝에 붙여 그린다
+                (`packages/video/src/components/CharacterImage.tsx`의 `objectPosition: 'bottom'`).
+                그래서 PNG 안에 들어 있는 투명 여백이 그대로 발밑 간격이 된다 — 운영자 기본
+                캐릭터는 딱 맞게 잘려 있어 화면 아래에서 몸을 내미는 것처럼 보이지만, 여백이
+                남은 그림은 공중에 뜬 원반처럼 보인다. 수강생이 이걸 알아낼 방법은 자기 릴스가
+                나온 뒤에 보는 것뿐이었다. 키워드 안내와 같은 모양으로 **무엇이 잘못되는지**를
+                말한다 — 규칙만 적으면 지켜야 할 이유가 전해지지 않는다.
+              */}
               <p className="characterHint">
-                캐릭터는 영상 위에 얹히기 때문에 배경이 투명한 PNG만 받습니다.
+                캐릭터는 영상 위에 얹히기 때문에 배경이 투명한 PNG만 받습니다. 캐릭터 둘레의
+                빈 여백은 바짝 잘라내고 올려주세요 — 캐릭터는 화면 맨 아래에 발을 붙이고 서듯
+                들어가는데, 그림에 여백이 남아 있으면 그만큼 위로 떠서 바닥에서 떨어진 스티커처럼
+                보입니다.
               </p>
 
               <label className="characterField">

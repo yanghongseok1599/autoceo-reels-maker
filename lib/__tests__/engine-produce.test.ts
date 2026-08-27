@@ -1,11 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import type { SubtitleJSON } from '@studio/video/src/types';
 import type { ReelProps } from '@studio/video/src/types';
-import { clipartAssetKey } from '../clipart';
+import { clipartAssetKey, type ClipartEntry } from '../clipart';
 import { PRESET_OWNER_ID } from '../clipart-preset';
+
+/**
+ * 프리셋 카탈로그를 이 파일이 직접 정한다. 운영자 기계에는 실제 라이브러리(104건)가 있고
+ * 저장소에도 그 메타데이터가 커밋돼 있으므로, 모의하지 않으면 이 검사들이 운영자가 캐릭터를
+ * 추가할 때마다 흔들린다. 여기서 볼 것은 카탈로그의 내용이 아니라 **카탈로그가 씬까지
+ * 닿는 두 갈래**(프리셋 복사 / 수강생 publish)다.
+ */
+const preset = vi.hoisted(() => ({ entries: [] as unknown[] }));
+
+vi.mock('../clipart-preset', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../clipart-preset')>()),
+  loadPresetClipart: () => Promise.resolve(preset.entries),
+}));
 
 const synthesizeNarration = vi.fn();
 const transcribeToSubtitles = vi.fn();
@@ -33,9 +43,7 @@ beforeEach(() => {
   transcribeToSubtitles.mockResolvedValue(subtitles);
   renderReel.mockResolvedValue(undefined);
   copyClipart.mockResolvedValue([]);
-  // 운영자 기계에는 실제 프리셋 라이브러리가 있다. 빈 디렉터리를 가리켜, 이 검사가
-  // 그 기계에 무엇이 들어 있는지에 따라 달라지지 않게 한다.
-  process.env.CLIPART_PRESET_DIR = mkdtempSync(path.join(os.tmpdir(), 'engine-preset-'));
+  preset.entries = [];
 });
 
 const input = {
@@ -68,21 +76,17 @@ describe('remotionEngine.produce', () => {
 });
 
 /**
- * 운영자 프리셋 카탈로그를 임시 디렉터리에 깐다. **그림 파일은 만들지 않는다** — 복사가
- * 실패하는 상황이 여기서 확인할 상황이고, 복사 자체는 `copyClipart`가 모의되어 있으므로
- * 무엇을 돌려주느냐로 성공·실패를 정한다.
+ * 프리셋 카탈로그를 이 키워드 하나로 채우고, 워커가 옮겨야 할 자리(`clipartAssetKey`)를
+ * 돌려준다. **그림 파일은 만들지 않는다** — 복사가 실패하는 상황이 여기서 확인할 상황이고,
+ * 복사 자체는 `copyClipart`가 모의되어 있으므로 무엇을 돌려주느냐로 성공·실패를 정한다.
  */
 function presetCatalog(keyword: string): string {
-  const dir = process.env.CLIPART_PRESET_DIR as string;
-  mkdirSync(path.join(dir, 'assets'), { recursive: true });
-  writeFileSync(
-    path.join(dir, 'assets', 'catalog.json'),
-    JSON.stringify({ items: [{ keyword, aliases: [], category: '건강', status: 'ready', file: `assets/clipart/${keyword}.png` }] }),
-  );
-  return clipartAssetKey({
+  const entry: ClipartEntry = {
     id: `preset:${keyword}`, ownerId: PRESET_OWNER_ID, keyword, aliases: [],
     category: '건강', source: 'preset', file: `assets/clipart/${keyword}.png`,
-  });
+  };
+  preset.entries = [entry];
+  return clipartAssetKey(entry);
 }
 
 /**

@@ -277,6 +277,44 @@ export function buildScenes(input: {
   return { scenes, usedClipart: Array.from(used.values()) };
 }
 
+/**
+ * 복사되지 못한 프리셋 그림을 가리키는 씬에서 캐릭터를 뗀다. `copyClipart`가 **실제로 쓴**
+ * 키 목록을 받아서 판단한다.
+ *
+ * 왜 필요한가: 씬은 원본이 있는지 알기 전에 주소를 정한다(`buildScenes`는 파일시스템을
+ * 보지 않는다). 복사가 실패하면 아무도 쓰지 않은 파일을 가리키는 씬이 남고, 렌더러는
+ * 프레임마다 404를 두 번 재시도한 끝에 렌더를 중단한다. `CharacterImage`의 `onError`가
+ * 중단은 막아 주지만, 이미 못 쓴다고 아는 주소를 넘겨 프레임마다 재시도 비용을 치를
+ * 이유는 없다. 두 방어선은 겹치는 게 아니라 서로 다른 실패를 맡는다:
+ * 여기는 **복사 시점에 알 수 있는** 실패, `onError`는 **렌더 시점에만 알 수 있는** 실패
+ * (수강생의 Blob URL이 남의 서버에서 404가 나는 경우 — 여기서는 볼 방법이 없다).
+ *
+ * **수강생 그림은 절대 떼지 않는다.** 복사 목록에 없는 것이 정상이기 때문이다 —
+ * `copyClipart`가 옮기지 않는 것이지 실패한 게 아니다. 그래서 "복사되지 않은 것"이 아니라
+ * "프리셋인데 복사되지 않은 것"만 떼도록 `usedClipart`로 다시 확인한다.
+ */
+export function dropUncopiedCharacters(
+  scenes: SceneDirective[],
+  usedClipart: ClipartEntry[],
+  copiedKeys: string[],
+): SceneDirective[] {
+  const copied = new Set(copiedKeys);
+  const missing = new Set(
+    usedClipart
+      .filter((entry) => entry.source === 'preset')
+      .map(clipartAssetKey)
+      .filter((key) => !copied.has(key)),
+  );
+  if (missing.size === 0) return scenes;
+
+  return scenes.map((scene) => {
+    if (!scene.characterImageUrl || !missing.has(scene.characterImageUrl)) return scene;
+    const stripped: SceneDirective = { ...scene };
+    delete stripped.characterImageUrl;
+    return stripped;
+  });
+}
+
 export async function generateScenes(input: {
   script: string; subtitles: SubtitleJSON; sheet: StyleSheet; catalog: ClipartEntry[];
 }): Promise<BuiltScenes> {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildScenes, generateScenes } from '../pipeline/scenes';
+import { buildScenes, dropUncopiedCharacters, generateScenes } from '../pipeline/scenes';
 import { planSceneTypes } from '../pipeline/scene-plan';
 import type { ClipartEntry } from '../clipart';
 import { clipartAssetKey } from '../clipart';
@@ -595,5 +595,58 @@ describe('buildScenes — 캐릭터', () => {
     });
     expect(scenes[0].characterImageUrl).toBeUndefined();
     expect(usedClipart).toEqual([]);
+  });
+});
+
+/**
+ * 씬은 원본이 있는지 알기 **전에** 주소를 정한다 — `buildScenes`는 파일시스템을 보지 않는다.
+ * 복사가 실패한 그림을 그대로 넘기면 렌더러가 404를 재시도하다 렌더를 중단한다.
+ */
+describe('dropUncopiedCharacters', () => {
+  const preset = PRESET_CATALOG[0];
+  const presetKey = clipartAssetKey(preset);
+  const withCharacter = (url: string): SceneDirective => ({
+    type: 'title_card', startTime: 0, endTime: 1, title: '제목', characterImageUrl: url,
+  });
+
+  it('strips a preset character whose image was not copied', () => {
+    const [scene] = dropUncopiedCharacters([withCharacter(presetKey)], [preset], []);
+    expect(scene.characterImageUrl).toBeUndefined();
+  });
+
+  it('keeps a preset character whose image was copied', () => {
+    const [scene] = dropUncopiedCharacters([withCharacter(presetKey)], [preset], [presetKey]);
+    expect(scene.characterImageUrl).toBe(presetKey);
+  });
+
+  /**
+   * **수강생 그림은 복사 목록에 없는 것이 정상이다.** `copyClipart`가 옮기지 않을 뿐
+   * 실패한 게 아니다. "복사되지 않았으니 뗀다"로 짜면 수강생이 올린 캐릭터가 한 장도
+   * 나오지 않는다 — 이 기능 전체가 조용히 죽는 자리다.
+   */
+  it('never strips a student character, which is never in the copied list', () => {
+    const student = studentEntry('clipart/ab12.png');
+    const [scene] = dropUncopiedCharacters([withCharacter('clipart/ab12.png')], [student], []);
+    expect(scene.characterImageUrl).toBe('clipart/ab12.png');
+  });
+
+  it('leaves scenes untouched when every preset image was copied', () => {
+    const scenes = [withCharacter(presetKey)];
+    expect(dropUncopiedCharacters(scenes, [preset], [presetKey])).toBe(scenes);
+  });
+
+  it('leaves a scene that never had a character alone', () => {
+    const bare: SceneDirective = { type: 'title_card', startTime: 0, endTime: 1, title: '제목' };
+    expect(dropUncopiedCharacters([bare], [preset], [])[0].characterImageUrl).toBeUndefined();
+  });
+
+  /** 한 장을 못 옮겼다고 옮긴 다른 장까지 잃으면 안 된다 */
+  it('only strips the scenes that point at the image it could not copy', () => {
+    const other = { ...preset, id: 'c9', keyword: '기쁨' };
+    const otherKey = clipartAssetKey(other);
+    const scenes = [withCharacter(presetKey), withCharacter(otherKey)];
+    const kept = dropUncopiedCharacters(scenes, [preset, other], [otherKey]);
+    expect(kept[0].characterImageUrl).toBeUndefined();
+    expect(kept[1].characterImageUrl).toBe(otherKey);
   });
 });

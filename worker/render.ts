@@ -51,19 +51,30 @@ function getBundle(): Promise<string> {
  *
  * 원본이 없거나 읽히지 않으면 건너뛴다. 캐릭터가 빠진 릴스는 괜찮은 릴스지만, 렌더가
  * 실패한 릴스는 아무것도 아니다 — 무게가 다르다. 한 항목이 실패해도 나머지는 계속 옮긴다.
+ *
+ * **실제로 쓴 키만 돌려준다. 그리고 그 목록을 호출자가 반드시 써야 한다.** 조용히 건너뛰고
+ * 끝내면 씬은 아무도 쓰지 않은 파일을 계속 가리키고, 렌더러는 프레임마다 404를 두 번
+ * 재시도한 뒤(`<Img>`의 기본 동작) 렌더를 중단한다. "조용히 건너뛴다"가 "조용히 렌더를
+ * 죽인다"가 되는 지점이 여기였다 — `lib/pipeline/scenes.ts`의 `dropUncopiedCharacters`가
+ * 이 반환값으로 못 쓰는 주소를 씬에서 뗀다.
  */
-export async function copyClipart(entries: ClipartEntry[], publicDir: string): Promise<void> {
+export async function copyClipart(entries: ClipartEntry[], publicDir: string): Promise<string[]> {
+  const copied: string[] = [];
   for (const entry of entries) {
-    // 수강생 이미지는 publish가 이미 도달 가능하게 뒀다
+    // 수강생 이미지는 publish가 이미 도달 가능하게 뒀다. 복사할 원본이 없을 뿐이지
+    // 못 쓰는 주소라는 뜻이 아니므로, 여기 목록에 없는 것이 곧 실패는 아니다.
     if (entry.source !== 'preset') continue;
-    const target = path.join(publicDir, clipartAssetKey(entry));
+    const key = clipartAssetKey(entry);
     try {
+      const target = path.join(publicDir, key);
       await mkdir(path.dirname(target), { recursive: true });
       await copyFile(path.join(presetDir(), entry.file), target);
+      copied.push(key);
     } catch {
       // 원본 없음 — 이 씬은 캐릭터 없이 렌더된다
     }
   }
+  return copied;
 }
 
 export async function renderReel(props: ReelProps, outPath: string): Promise<void> {

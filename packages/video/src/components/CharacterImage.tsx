@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { AbsoluteFill, Img, interpolate, useCurrentFrame, useVideoConfig } from 'remotion';
 import { resolveAudioSrc } from '../utils/audioSrc';
 
@@ -106,6 +106,17 @@ export function characterEntry(sceneFrame: number, fps: number) {
  * "원격 URL이면 그대로, 상대 경로면 `staticFile()`" 규칙이라 이미지에도 그대로 필요하다.
  * 이름만 오디오일 뿐 규칙은 미디어 일반이다 — 같은 규칙을 여기 다시 적으면 두 벌이 된다.
  *
+ * **그림을 못 불러오면 캐릭터만 빠지고 릴스는 계속 간다.** Remotion의 `<Img>`는 두 번
+ * 재시도한 뒤 `cancelRender('Error loading image with src: …')`를 부른다 — `onError`를 주지
+ * 않으면 렌더가 통째로 중단된다. 실제로 그렇게 죽는 것을 확인했다
+ * (`packages/video/src/__tests__/missingCharacterRender.test.ts`).
+ *
+ * 렌더 전 검사로는 이 구멍을 다 막지 못한다. 수강생 그림은 `publish`가 돌려준 Blob URL이라
+ * **남의 서버에 있고**, 렌더 시점에 404가 날 수 있다. 복사 단계에서는 볼 수 없는 실패다.
+ * 그래서 마지막 방어선은 여기다: 실패하면 이 레이어를 통째로 걷어 낸다. 언마운트되면
+ * `<Img>`가 걸어 둔 `delayRender` 핸들도 정리 함수에서 `continueRender`로 풀리므로
+ * 프레임이 멈추지도 않는다.
+ *
  * `startTime`은 형제 씬 컴포넌트와 같은 씬 프레임 계산을 하기 위해 받는다. 전역 프레임을
  * 그대로 쓰면 등장 모션이 릴 맨 앞에서 한 번만 재생되고, 3번째 씬에서 처음 나타나는
  * 캐릭터는 모션 없이 튀어나온다. 다만 이 값은 **씬의 시작이 아니라 이 캐릭터가 처음
@@ -119,6 +130,7 @@ export const CharacterImage: React.FC<{
 }> = ({ src, startTime, sceneScale }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const [failed, setFailed] = useState(false);
   const sceneFrame = frame - Math.round(startTime * fps);
   const { opacity, translateY } = characterEntry(sceneFrame, fps);
 
@@ -135,6 +147,9 @@ export const CharacterImage: React.FC<{
    */
   const counterScale = undoSceneScale(sceneScale);
 
+  // 그림이 오지 않았다. 캐릭터 없는 씬은 멀쩡한 씬이다.
+  if (failed) return null;
+
   return (
     <AbsoluteFill
       style={{
@@ -146,6 +161,12 @@ export const CharacterImage: React.FC<{
     >
       <Img
         src={resolveAudioSrc(src)}
+        /**
+         * 이 한 줄이 렌더가 죽는 것과 캐릭터만 빠지는 것을 가른다. `<Img>`는 `onError`가
+         * **없을 때만** `cancelRender`를 부른다(`remotion/dist/cjs/Img.js`의 `didGetError`).
+         * 재시도 두 번은 그대로 살려 둔다 — 잠깐 흔들린 CDN이라면 그 사이에 붙는다.
+         */
+        onError={() => setFailed(true)}
         style={{
           width: BOX_WIDTH,
           height: BOX_HEIGHT,

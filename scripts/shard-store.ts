@@ -40,6 +40,16 @@ export interface ShardReport {
   legacy: Record<string, number>;
   /** 쓸 수 있는 `id`가 없어 옮길 자리를 정하지 못한 레코드 수. 옛 키에 그대로 있다. */
   unkeyed: Record<string, number>;
+  /**
+   * 새 자리로는 옮겼지만 **찾아갈 다리를 놓지 못한** 레코드의 id.
+   *
+   * 이 칸이 생긴 이유: 예전에는 `alreadyThere`가 `ids.length - added.length`였다. 그래서
+   * 초대코드 해시가 없어 인덱스에 넣지 못한 계정이 "이미 있음"으로 세어졌다 — 운영자는
+   * 이 숫자를 보고 이전이 잘 됐는지 판단하는데, **어떤 초대코드로도 로그인할 수 없는 계정이
+   * 멀쩡한 것으로 보고된 것이다.** 세지 못하는 것과 괜찮은 것은 다른 소식이므로 칸을 나눈다.
+   * 수를 세는 데서 그치지 않고 id를 담는다 — 몇 건인지보다 **누구인지**가 필요한 정보다.
+   */
+  unplaceable: Record<string, string[]>;
 }
 
 /**
@@ -79,7 +89,9 @@ function expectArray(value: unknown, key: string): Record<string, unknown>[] {
 
 export async function shardStore(): Promise<ShardReport> {
   const store = selectStore();
-  const report: ShardReport = { moved: {}, skipped: [], alreadyThere: {}, legacy: {}, unkeyed: {} };
+  const report: ShardReport = {
+    moved: {}, skipped: [], alreadyThere: {}, legacy: {}, unkeyed: {}, unplaceable: {},
+  };
 
   /**
    * fallback이 `null`인 것이 핵심이다. `[]`로 읽으면 "키가 없다"와 "키가 비었다"가 똑같이
@@ -143,10 +155,21 @@ export async function shardStore(): Promise<ShardReport> {
     const known = new Set(existing.map((entry) => entry.id));
 
     const added: JobIndexEntry[] = [];
+    let already = 0;
+    const unplaceable: string[] = [];
     for (const id of ids) {
-      if (known.has(id)) continue;
+      if (known.has(id)) {
+        already += 1;
+        continue;
+      }
       const job = await store.read<RenderJob | null>(`jobs/${id}`, null);
-      if (!job) continue;
+      // 방금 옮긴 잡을 다시 읽지 못했다. 인덱스에 없으면 워커가 영영 집지 않으므로
+      // "이미 있음"이 아니라 **못 넣음**이다 — 둘을 한 숫자로 합치면 큐에 걸리지 않는
+      // 잡이 정상으로 보고된다.
+      if (!job) {
+        unplaceable.push(id);
+        continue;
+      }
       added.push({
         id: job.id,
         status: job.status,
@@ -158,7 +181,8 @@ export async function shardStore(): Promise<ShardReport> {
 
     if (added.length) await store.write('job-index', [...existing, ...added]);
     report.moved['job-index'] = added.length;
-    report.alreadyThere['job-index'] = ids.length - added.length;
+    report.alreadyThere['job-index'] = already;
+    report.unplaceable['job-index'] = unplaceable;
   }
 
   /**
@@ -177,20 +201,46 @@ export async function shardStore(): Promise<ShardReport> {
       await store.read<unknown>(STUDENT_INDEX_KEY, []),
       STUDENT_INDEX_KEY,
     );
-    const known = new Set(existing.map((entry) => entry.codeHash));
+    /** `codeHash` → 인덱스가 지금 가리키는 id. 누가 차지했는지까지 알아야 구분이 된다. */
+    const claimed = new Map<string, unknown>();
+    for (const entry of existing) {
+      if (typeof entry.codeHash === 'string' && !claimed.has(entry.codeHash)) {
+        claimed.set(entry.codeHash, entry.id);
+      }
+    }
 
     const added: StudentIndexEntry[] = [];
+    let already = 0;
+    const unplaceable: string[] = [];
     for (const id of ids) {
       const student = await store.read<StudentAccount | null>(`students/${id}`, null);
       const codeHash = typeof student?.codeHash === 'string' ? student.codeHash : '';
-      if (!codeHash || known.has(codeHash)) continue;
+      // 해시가 없으면 어떤 초대코드로도 이 계정에 닿을 수 없다. 옛 코드는 이것을
+      // "이미 있음"으로 셌다 — 로그인 경로가 아예 없는 계정을 괜찮다고 보고한 것이다.
+      if (!codeHash) {
+        unplaceable.push(id);
+        continue;
+      }
+      const holder = claimed.get(codeHash);
+      // 자기 해시가 자기를 가리킬 때만 "이미 있음"이다.
+      if (holder === id) {
+        already += 1;
+        continue;
+      }
+      // 같은 초대코드를 다른 계정이 이미 차지했다. 여기서 골라 주면 둘 중 하나가 남의
+      // 계정으로 들어가거나 조용히 잠긴다 — 사람이 정할 일이라 옮기기만 하고 알린다.
+      if (holder !== undefined) {
+        unplaceable.push(id);
+        continue;
+      }
       added.push({ codeHash, id });
-      known.add(codeHash);
+      claimed.set(codeHash, id);
     }
 
     if (added.length) await store.write(STUDENT_INDEX_KEY, [...existing, ...added]);
     report.moved[STUDENT_INDEX_KEY] = added.length;
-    report.alreadyThere[STUDENT_INDEX_KEY] = ids.length - added.length;
+    report.alreadyThere[STUDENT_INDEX_KEY] = already;
+    report.unplaceable[STUDENT_INDEX_KEY] = unplaceable;
   }
 
   /**
@@ -307,10 +357,25 @@ async function main() {
       `${key.padEnd(17)} 옮김 ${report.moved[key]}건` +
         ` · 이미 있음 ${report.alreadyThere[key] ?? 0}건` +
         ` · 주인 모름 ${report.legacy[key] ?? 0}건` +
-        ` · id 없음 ${report.unkeyed[key] ?? 0}건`,
+        ` · id 없음 ${report.unkeyed[key] ?? 0}건` +
+        ` · 못 넣음 ${(report.unplaceable[key] ?? []).length}건`,
     );
   }
   console.log(`건너뜀(옛 키 없음): ${report.skipped.join(', ') || '없음'}`);
+
+  // 숫자만으로는 무엇을 봐야 할지 알 수 없다. 못 넣은 것은 **이름을 부른다.**
+  const stuck = Object.keys(report.unplaceable).filter((key) => report.unplaceable[key].length);
+  if (stuck.length) {
+    console.log(`\n못 넣음 — 옮기기는 했으나 찾아갈 다리가 없습니다:`);
+    for (const key of stuck) {
+      console.log(`  ${key}: ${report.unplaceable[key].join(', ')}`);
+    }
+    console.log(
+      `  ${STUDENT_INDEX_KEY}에 못 넣은 계정은 **어떤 초대코드로도 로그인할 수 없습니다.**` +
+        `\n  초대코드가 겹쳤거나 계정에 해시가 없습니다 — 사람이 확인해야 합니다.`,
+    );
+  }
+
   console.log(
     `\n옛 키는 지우지 않았습니다. 위 건수가 옛 파일의 건수와 다르면 되돌릴 수 있습니다.` +
       `\n주인 모를 기록은 \`${LEGACY_OWNER}\`에 있습니다 — 아무 수강생에게도 보이지 않습니다.`,

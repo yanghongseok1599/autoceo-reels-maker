@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { shardStore, LEGACY_OWNER } from '../shard-store';
 import { store } from '../../lib/store';
 import { getProject } from '../../lib/projects';
@@ -127,6 +127,32 @@ describe('shardStore — 잡', () => {
     const index = await store.read<JobIndexEntry[]>('job-index', []);
     expect(index).toHaveLength(1);
     expect(index[0].status).toBe('completed');
+  });
+
+  /**
+   * 옛 셈법은 `ids.length - added.length`였다. 인덱스에 **못 들어간** 잡이 거기서
+   * "이미 있음"으로 나온다 — 워커가 영영 집지 않을 잡을 정상으로 보고하는 것이다.
+   * 옮긴 잡을 다시 읽지 못하는 상황을 만들어 그 셈이 갈라졌는지 본다.
+   */
+  it('인덱스에 넣지 못한 잡을 "이미 있음"으로 세지 않는다', async () => {
+    await store.write('jobs', [anyJob({ id: 'job_a' }), anyJob({ id: 'job_b' })]);
+
+    const passThrough = store.read.bind(store);
+    const spy = vi.spyOn(store, 'read').mockImplementation(((key: string, fallback: unknown) =>
+      key === 'jobs/job_b' ? Promise.resolve(fallback) : passThrough(key, fallback)) as
+      typeof store.read);
+
+    let result;
+    try {
+      result = await shardStore();
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(result.moved.jobs).toBe(2);
+    expect(result.moved['job-index']).toBe(1);
+    expect(result.alreadyThere['job-index']).toBe(0);
+    expect(result.unplaceable['job-index']).toEqual(['job_b']);
   });
 });
 
@@ -400,5 +426,43 @@ describe('shardStore — 수강생 계정', () => {
     const result = await shardStore();
     expect(result.skipped).toContain('students');
     expect(result.moved.students).toBeUndefined();
+  });
+
+  /**
+   * 운영자는 이 숫자를 보고 이전이 기대대로 됐는지 판단한다. 옛 셈법
+   * (`ids.length - added.length`)은 **로그인 경로가 아예 없는 계정을 "이미 있음"으로**
+   * 셌다 — 리뷰어가 3건짜리 픽스처에서 `옮김 1 · 이미 있음 1`을 봤는데 그 1건은
+   * 어떤 초대코드로도 들어올 수 없는 계정이었다. 못 넣은 것은 따로 세고 이름을 부른다.
+   */
+  it('초대코드 해시가 없는 계정을 "이미 있음"으로 세지 않는다', async () => {
+    await store.write(STUDENT_INDEX_KEY, [{ codeHash: hashCode('BBBB-2222'), id: 'u2' }]);
+    await store.write('students', [
+      legacyStudent('u1', 'AAAA-1111'), // 새로 넣는다
+      legacyStudent('u2', 'BBBB-2222'), // 인덱스에 이미 자기 자리로 있다
+      { id: 'u3', name: '해시없음' }, // 어떤 코드로도 닿지 않는다
+    ]);
+
+    const result = await shardStore();
+
+    expect(result.moved[STUDENT_INDEX_KEY]).toBe(1);
+    expect(result.alreadyThere[STUDENT_INDEX_KEY]).toBe(1);
+    expect(result.unplaceable[STUDENT_INDEX_KEY]).toEqual(['u3']);
+    // 레코드는 옮겨졌다. 잃은 것이 아니라 **찾아갈 수 없는** 것이고, 그 차이가 보고에 있어야 한다.
+    expect(await readObject('students/u3')).toMatchObject({ id: 'u3' });
+  });
+
+  it('같은 초대코드를 나중에 주장한 계정을 "이미 있음"으로 세지 않는다', async () => {
+    await store.write('students', [
+      legacyStudent('u1', 'AAAA-1111'),
+      legacyStudent('u2', 'AAAA-1111'),
+    ]);
+
+    const result = await shardStore();
+
+    expect(result.moved[STUDENT_INDEX_KEY]).toBe(1);
+    expect(result.alreadyThere[STUDENT_INDEX_KEY]).toBe(0);
+    expect(result.unplaceable[STUDENT_INDEX_KEY]).toEqual(['u2']);
+    // 인덱스는 u1을 가리키고 레코드 해시 재확인도 u1을 통과시킨다 — u2는 조용히 잠긴다.
+    expect((await verifyInviteCode('AAAA-1111'))?.id).toBe('u1');
   });
 });

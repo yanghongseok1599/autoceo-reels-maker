@@ -7,7 +7,7 @@ import { store } from '@/lib/store';
 import { resetStoreForTests } from '@/lib/store/file-store';
 import { upsertFishVoice, type FishVoiceProfile } from '@/lib/fish-voice-store';
 import { getProject } from '@/lib/projects';
-import type { RenderJob } from '@/lib/jobs';
+import type { JobIndexEntry } from '@/lib/jobs';
 
 const student = (id: string): StudentAccount => ({
   id, name: id, codeHash: `hash_${id}`, monthlyRenderCount: 0,
@@ -109,7 +109,13 @@ describe('POST /api/projects — voice ownership', () => {
      * 무엇을 만들었든 항상 통과하는 빈 검사가 된다.
      */
     expect(existsSync(path.join(process.env.STORE_DIR!, 'projects'))).toBe(false);
-    expect(await store.read<RenderJob[]>('jobs', [])).toEqual([]);
+    /**
+     * 잡도 마찬가지로 `jobs/<id>`에 하나씩 들어간다. `store.read('jobs', [])`로 확인하면
+     * 이제는 없는 키의 fallback을 받아 큐에 무엇이 들어갔든 항상 통과한다. 그래서 잡 디렉터리
+     * 자체와, 큐가 실제로 보는 투영인 `job-index`를 본다.
+     */
+    expect(existsSync(path.join(process.env.STORE_DIR!, 'jobs'))).toBe(false);
+    expect(await store.read<JobIndexEntry[]>('job-index', [])).toEqual([]);
     const students = await store.read<StudentAccount[]>('students', []);
     expect(students.find((s) => s.id === 'u1')?.monthlyRenderCount).toBe(0);
   });

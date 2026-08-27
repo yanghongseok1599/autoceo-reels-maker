@@ -32,10 +32,12 @@ export const fileStore: Store & { kind: 'file' } = {
 };
 
 /**
- * `projects`는 더 이상 지울 배열이 아니다 — 프로젝트는 이제 `projects/<id>`처럼
- * 자기 키에 하나씩 들어간다. 빈 배열을 다시 써 두면 실제로는 아무도 읽지 않는 키가
- * 남아, 아직 배열인 척하는 것처럼 보인다.
+ * `projects`도 `jobs`도 더 이상 지울 배열이 아니다 — 둘 다 이제 `projects/<id>`,
+ * `jobs/<id>`처럼 자기 키에 하나씩 들어간다. 빈 배열을 다시 써 두면 실제로는 아무도
+ * 읽지 않는 키가 남아, 아직 배열인 척하는 것처럼 보인다.
+ *
+ * 잡에서 남는 배열은 `job-index` 하나뿐이다 — 잡 자체가 아니라 후보를 고르기 위한 투영이다.
  */
 export async function resetStoreForTests(): Promise<void> {
-  await fileStore.write('jobs', []);
+  await fileStore.write('job-index', []);
 }

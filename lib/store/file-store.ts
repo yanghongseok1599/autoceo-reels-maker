@@ -1,6 +1,6 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { assertSafeStoreKey, type Store } from './types';
+import { assertSafeStoreKey, STORE_LIST_LIMIT, type Store } from './types';
 
 /**
  * 호출 시점에 경로를 정한다. 모듈 로드 시점에 고정하면 테스트가 `STORE_DIR`로 임시 디렉터리를
@@ -28,6 +28,22 @@ export const fileStore: Store & { kind: 'file' } = {
     // 없으면 `ENOENT`로 죽는다.
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, JSON.stringify(value, null, 2), 'utf8');
+  },
+
+  async list(prefix: string): Promise<string[]> {
+    assertSafeStoreKey(prefix);
+    const dir = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
+    let names: string[];
+    try {
+      names = await readdir(path.join(dataDir(), dir));
+    } catch {
+      // 아직 아무것도 안 쓴 prefix는 오류가 아니라 "비어 있음"이다.
+      return [];
+    }
+    return names
+      .filter((name) => name.endsWith('.json'))
+      .slice(0, STORE_LIST_LIMIT)
+      .map((name) => `${dir}/${name.slice(0, -'.json'.length)}`);
   },
 };
 

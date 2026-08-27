@@ -1,6 +1,24 @@
+/**
+ * `list` 한 번이 돌려주는 키의 상한. `@vercel/blob`의 `list` 기본값과 같은 값을 쓰고,
+ * 파일 구현도 같은 값으로 자른다 — 두 구현이 다른 개수를 돌려주면, 배포에서만 다르게
+ * 동작하는 코드가 되고 그건 이 프로젝트가 이미 한 번 겪은 사고다.
+ *
+ * 잘라낸다는 것은 곧 **키가 이보다 많으면 전부 보이지 않는다**는 뜻이다. 지금 유일한
+ * 호출자(잡 고아 쓸기)에게는 안전한 실패다 — 못 본 것을 지우지 않고 그냥 다음 기회로 넘긴다.
+ */
+export const STORE_LIST_LIMIT = 1000;
+
 export interface Store {
   read<T>(key: string, fallback: T): Promise<T>;
   write<T>(key: string, value: T): Promise<void>;
+  /**
+   * `prefix`로 시작하는 키들을 돌려준다. **값이 아니라 키**다 — 부르는 쪽이 무엇이
+   * 있는지만 알면 되는 자리에서 저장소 전체를 읽어 오지 않게 하려는 것이다.
+   *
+   * 키에는 `.json` 같은 저장 형식이 붙지 않는다. 그건 구현의 사정이지 부르는 쪽의 사정이 아니다.
+   * 없는 prefix는 오류가 아니라 빈 배열이다. 최대 `STORE_LIST_LIMIT`개까지만 돌려준다.
+   */
+  list(prefix: string): Promise<string[]>;
 }
 
 /**

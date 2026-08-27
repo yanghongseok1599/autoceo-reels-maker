@@ -1,5 +1,5 @@
-import { get, put } from '@vercel/blob';
-import { assertSafeStoreKey, type Store } from './types';
+import { get, list, put } from '@vercel/blob';
+import { assertSafeStoreKey, STORE_LIST_LIMIT, type Store } from './types';
 
 /**
  * `put`의 `cacheControlMaxAge` 기본값은 **한 달**이다
@@ -38,5 +38,23 @@ export const blobStore: Store & { kind: 'blob' } = {
       allowOverwrite: true,
       cacheControlMaxAge: BLOB_JSON_MAX_AGE_SECONDS,
     });
+  },
+
+  async list(prefix: string): Promise<string[]> {
+    assertSafeStoreKey(prefix);
+    try {
+      /**
+       * `limit`을 직접 준다. 주지 않으면 1000이 기본값이라 지금은 같지만, SDK가 기본값을
+       * 바꾸면 파일 구현과 조용히 갈라진다(`index.d.ts:290`).
+       */
+      const result = await list({ prefix, limit: STORE_LIST_LIMIT });
+      return result.blobs
+        .map((blob) => blob.pathname)
+        .filter((pathname) => pathname.endsWith('.json'))
+        .map((pathname) => pathname.slice(0, -'.json'.length));
+    } catch {
+      // 읽기와 같은 태도다. 목록을 못 얻는 것은 "아무것도 없다"로 처리하고 호출자를 죽이지 않는다.
+      return [];
+    }
   },
 };

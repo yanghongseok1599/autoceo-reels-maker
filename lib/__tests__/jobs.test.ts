@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { enqueueJob, claimNextJob, updateJob, getJob, STALE_CLAIM_MS } from '../jobs';
+import {
+  enqueueJob, claimNextJob, updateJob, getJob,
+  STALE_CLAIM_MS, SWEEP_INTERVAL_MS,
+  type RenderJob, type JobIndexEntry,
+} from '../jobs';
 import { store } from '../store';
 import { resetStoreForTests } from '../store/file-store';
 
@@ -110,5 +114,69 @@ describe('job queue', () => {
     const job = await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
     await store.write(`jobs/${job.id}`, { ...job, status: 'completed' });
     expect(await claimNextJob()).toBeNull();
+  });
+});
+
+/**
+ * 인덱스 쓰기를 잃는 세 경우 중 enqueue만 스스로 낫지 못한다. 잡은 `queued`로 멀쩡히
+ * 있는데 인덱스에 항목이 없으면 아무 워커도 집어가지 않고, 집어가지 않으니 항목을 다시
+ * 쓸 전이도 영영 오지 않는다. 수강생에게는 0%에서 멈춘 것으로 보인다.
+ */
+describe('orphan sweep', () => {
+  const orphanJob = (over: Partial<RenderJob> = {}): RenderJob => ({
+    id: `job_${Math.random().toString(16).slice(2, 18)}`,
+    projectId: 'p1', ownerId: 'u1', engine: 'remotion',
+    status: 'queued', progress: 0, claimedAt: null,
+    resultUrl: null, error: null, createdAt: '2026-03-01T00:00:00Z',
+    ...over,
+  });
+
+  const indexIds = async () =>
+    (await store.read<JobIndexEntry[]>('job-index', [])).map((e) => e.id);
+
+  it('recovers a lost enqueue, but not before the sweep is due', async () => {
+    // 빈 폴링 한 번으로 쓸기 시계를 이 시각에 맞춘다.
+    const t0 = new Date('2026-03-01T00:00:00Z');
+    expect(await claimNextJob(t0)).toBeNull();
+
+    // 인덱스 쓰기를 잃은 enqueue를 그대로 재현한다: 잡만 있고 인덱스에는 없다.
+    const orphan = orphanJob();
+    await store.write(`jobs/${orphan.id}`, orphan);
+    expect(await indexIds()).toEqual([]);
+
+    // 아직 때가 아니다. 여기서 집어간다면 폴링마다 목록을 훑고 있다는 뜻이다.
+    expect(await claimNextJob(new Date(t0.getTime() + SWEEP_INTERVAL_MS - 1000))).toBeNull();
+
+    // 때가 되면 인덱스로 돌아오고 그 폴링에서 바로 나간다.
+    const claimed = await claimNextJob(new Date(t0.getTime() + SWEEP_INTERVAL_MS));
+    expect(claimed?.id).toBe(orphan.id);
+    expect(await indexIds()).toEqual([orphan.id]);
+  });
+
+  // 쓸기는 복구지 부활이 아니다. 끝난 잡을 다시 큐에 넣으면 학생 영상이 두 번 렌더된다.
+  it('does not resurrect a terminal job it finds outside the index', async () => {
+    const t0 = new Date('2026-04-01T00:00:00Z');
+    expect(await claimNextJob(t0)).toBeNull();
+
+    const done = orphanJob({ status: 'completed', progress: 100, resultUrl: '/out.mp4' });
+    await store.write(`jobs/${done.id}`, done);
+
+    const after = new Date(t0.getTime() + SWEEP_INTERVAL_MS);
+    expect(await claimNextJob(after)).toBeNull();
+    // 인덱스에는 들어오되 완료 상태로 들어온다 — 그래야 폴링마다 다시 훑지 않는다.
+    const index = await store.read<JobIndexEntry[]>('job-index', []);
+    expect(index.map((e) => ({ id: e.id, status: e.status })))
+      .toEqual([{ id: done.id, status: 'completed' }]);
+  });
+
+  // 쓸기가 인덱스에 이미 있는 잡을 중복으로 넣으면, 같은 잡이 두 번 나가거나 인덱스가 부푼다.
+  it('leaves jobs the index already knows alone', async () => {
+    const t0 = new Date('2026-05-01T00:00:00Z');
+    const job = await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
+    expect((await claimNextJob(t0))?.id).toBe(job.id);
+    await updateJob(job.id, { status: 'completed' });
+
+    expect(await claimNextJob(new Date(t0.getTime() + SWEEP_INTERVAL_MS))).toBeNull();
+    expect(await indexIds()).toEqual([job.id]);
   });
 });

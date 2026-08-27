@@ -10,9 +10,11 @@ import { assertSafeStoreKey } from '../types';
 // "가드가 돌았다"를 증명한다.
 const put = vi.fn();
 const get = vi.fn();
+const list = vi.fn();
 vi.mock('@vercel/blob', () => ({
   put: (...a: unknown[]) => put(...a),
   get: (...a: unknown[]) => get(...a),
+  list: (...a: unknown[]) => list(...a),
 }));
 
 async function blobStore() {
@@ -23,6 +25,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   put.mockResolvedValue({ url: 'https://store.public.blob.vercel-storage.com/x.json' });
   get.mockResolvedValue({ statusCode: 200, stream: new Response('{}').body });
+  list.mockResolvedValue({ blobs: [], cursor: undefined, hasMore: false });
 });
 
 describe('fileStore with nested keys', () => {
@@ -45,6 +48,32 @@ describe('fileStore with nested keys', () => {
   it('still handles a flat key', async () => {
     await fileStore.write('students', [{ id: 'u1' }]);
     expect(await fileStore.read('students', [])).toEqual([{ id: 'u1' }]);
+  });
+});
+
+describe('fileStore.list', () => {
+  // 값이 아니라 키를 돌려준다. 부르는 쪽이 "무엇이 있는지"만 알면 되는 자리에서
+  // 저장소 전체를 읽어 오지 않게 하려는 것이 이 메서드의 존재 이유다.
+  it('returns keys under the prefix, without the storage extension', async () => {
+    await fileStore.write('jobs/job_a', { id: 'job_a' });
+    await fileStore.write('jobs/job_b', { id: 'job_b' });
+    expect((await fileStore.list('jobs/')).sort()).toEqual(['jobs/job_a', 'jobs/job_b']);
+  });
+
+  it('accepts the prefix with or without a trailing slash', async () => {
+    await fileStore.write('jobs/job_a', { id: 'job_a' });
+    expect(await fileStore.list('jobs')).toEqual(['jobs/job_a']);
+  });
+
+  // 아직 아무것도 안 쓴 prefix는 오류가 아니다. 여기서 던지면 워커 폴링이 통째로 죽는다.
+  it('returns an empty list for a prefix nothing has been written under', async () => {
+    expect(await fileStore.list('jobs/')).toEqual([]);
+  });
+
+  it('does not leak keys from a sibling prefix', async () => {
+    await fileStore.write('jobs/job_a', { id: 'job_a' });
+    await fileStore.write('projects/proj_a', { id: 'proj_a' });
+    expect(await fileStore.list('jobs/')).toEqual(['jobs/job_a']);
   });
 });
 
@@ -96,6 +125,20 @@ describe('저장소 표면이 탈출 키를 거부한다', () => {
       await expect(store.read(key, [])).rejects.toThrow('저장소 키가 올바르지 않습니다');
     }
     expect(get).not.toHaveBeenCalled();
+  });
+
+  it('fileStore.list refuses every escaping prefix', async () => {
+    for (const key of escaping) {
+      await expect(fileStore.list(key)).rejects.toThrow('저장소 키가 올바르지 않습니다');
+    }
+  });
+
+  it('blobStore.list refuses every escaping prefix before calling the SDK', async () => {
+    const store = await blobStore();
+    for (const key of escaping) {
+      await expect(store.list(key)).rejects.toThrow('저장소 키가 올바르지 않습니다');
+    }
+    expect(list).not.toHaveBeenCalled();
   });
 
   it('both implementations still accept a nested key', async () => {

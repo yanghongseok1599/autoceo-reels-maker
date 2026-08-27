@@ -1,5 +1,5 @@
 import { get, put } from '@vercel/blob';
-import type { Store } from './types';
+import { assertSafeStoreKey, type Store } from './types';
 
 /**
  * `put`의 `cacheControlMaxAge` 기본값은 **한 달**이다
@@ -14,6 +14,7 @@ export const blobStore: Store & { kind: 'blob' } = {
   kind: 'blob',
 
   async read<T>(key: string, fallback: T): Promise<T> {
+    assertSafeStoreKey(key);
     try {
       /**
        * `fetch(url, { cache: 'no-store' })`로는 부족했다 — 그건 Next의 데이터 캐시만 끄고
@@ -29,6 +30,7 @@ export const blobStore: Store & { kind: 'blob' } = {
   },
 
   async write<T>(key: string, value: T): Promise<void> {
+    assertSafeStoreKey(key);
     await put(`${key}.json`, JSON.stringify(value, null, 2), {
       access: 'public',
       contentType: 'application/json',

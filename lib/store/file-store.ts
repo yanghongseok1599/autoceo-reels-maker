@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { Store } from './types';
+import { assertSafeStoreKey, type Store } from './types';
 
 /**
  * 호출 시점에 경로를 정한다. 모듈 로드 시점에 고정하면 테스트가 `STORE_DIR`로 임시 디렉터리를
@@ -14,6 +14,7 @@ export const fileStore: Store & { kind: 'file' } = {
   kind: 'file' as const,
 
   async read<T>(key: string, fallback: T): Promise<T> {
+    assertSafeStoreKey(key);
     try {
       return JSON.parse(await readFile(path.join(dataDir(), `${key}.json`), 'utf8')) as T;
     } catch {
@@ -21,8 +22,12 @@ export const fileStore: Store & { kind: 'file' } = {
     }
   },
   async write<T>(key: string, value: T): Promise<void> {
-    await mkdir(dataDir(), { recursive: true });
-    await writeFile(path.join(dataDir(), `${key}.json`), JSON.stringify(value, null, 2), 'utf8');
+    assertSafeStoreKey(key);
+    const target = path.join(dataDir(), `${key}.json`);
+    // 데이터 디렉터리가 아니라 **키의 부모**를 만든다. `projects/abc` 같은 중첩 키가
+    // 없으면 `ENOENT`로 죽는다.
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, JSON.stringify(value, null, 2), 'utf8');
   },
 };
 

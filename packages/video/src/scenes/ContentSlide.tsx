@@ -19,7 +19,11 @@ import { SPRING_PRESETS, getEntryExitOpacity, getExitBlur, getEntryExitScale } f
  *   5) 등장 모션 스케일 업    → 왼쪽에서 밀려 들어옴
  * 씬 프레임 계산과 등장·퇴장 처리는 형제 컴포넌트와 동일하게 `utils/animations`를 쓴다.
  */
-export const ContentSlide: React.FC<{ scene: ContentSlideScene; palette: Palette }> = ({ scene, palette }) => {
+export const ContentSlide: React.FC<{
+  scene: ContentSlideScene; palette: Palette;
+  /** 배경 위, 본문 글자 아래에 그릴 레이어 (캐릭터 오버레이) */
+  underlay?: React.ReactNode;
+}> = ({ scene, palette, underlay }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const sceneFrame = frame - Math.round(scene.startTime * fps);
@@ -61,6 +65,10 @@ export const ContentSlide: React.FC<{ scene: ContentSlideScene; palette: Palette
           background: `radial-gradient(ellipse at 24% 34%, ${accent}2e 0%, ${palette.paper}f2 60%)`,
         }} />
       )}
+
+      {/* 배경과 본문 **사이**. 캐릭터가 여기 들어가야 본문 글자가 캐릭터를 덮는다 —
+          겹치면 잃는 쪽이 캐릭터여야지 글자여서는 안 된다. SceneRouter 주석 참고. */}
+      {underlay}
 
       <div style={{
         position: 'relative',

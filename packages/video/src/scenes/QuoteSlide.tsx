@@ -3,7 +3,11 @@ import { AbsoluteFill, Img, spring, useCurrentFrame, useVideoConfig, interpolate
 import type { Palette, QuoteScene } from '../types';
 import { SPRING_PRESETS, getEntryExitOpacity, getExitBlur, getEntryExitScale } from '../utils/animations';
 
-export const QuoteSlide: React.FC<{ scene: QuoteScene; palette: Palette }> = ({ scene, palette }) => {
+export const QuoteSlide: React.FC<{
+  scene: QuoteScene; palette: Palette;
+  /** 배경 위, 본문 글자 아래에 그릴 레이어 (캐릭터 오버레이) */
+  underlay?: React.ReactNode;
+}> = ({ scene, palette, underlay }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const sceneFrame = frame - Math.round(scene.startTime * fps);
@@ -38,6 +42,10 @@ export const QuoteSlide: React.FC<{ scene: QuoteScene; palette: Palette }> = ({ 
           background: `radial-gradient(ellipse at center, ${accent}25 0%, ${palette.paper}f2 70%)`,
         }} />
       )}
+
+      {/* 배경과 본문 **사이**. 캐릭터가 여기 들어가야 본문 글자가 캐릭터를 덮는다 —
+          겹치면 잃는 쪽이 캐릭터여야지 글자여서는 안 된다. SceneRouter 주석 참고. */}
+      {underlay}
 
       <div style={{
         position: 'relative',

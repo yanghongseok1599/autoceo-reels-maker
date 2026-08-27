@@ -1,5 +1,6 @@
 import type { SubtitleJSON, SubtitleSegment, SceneDirective } from '@studio/video/src/types';
 import { planSceneTypes } from './scene-plan';
+import { clipartAssetKey, matchClipart, type ClipartEntry } from '../clipart';
 import { pickBackground, type StyleSheet } from '../style-sheet';
 
 type SceneType = SceneDirective['type'];
@@ -107,8 +108,32 @@ function splitLead(text: string): { lead: string; body: string[] } {
 }
 
 /**
+ * 매칭된 캐릭터 그림이 렌더러에서 불릴 주소. **source에 따라 답이 다르고, 섞으면 그림이
+ * 조용히 사라진다**(`ClipartEntry.source` 주석):
+ *
+ * - `preset`: 원본이 `public/` 밖의 운영자 디렉터리에 있어 렌더 전에 복사된다. 씬은 원본
+ *   경로가 아니라 **복사본이 놓일 자리**(`clipartAssetKey`)를 가리켜야 한다.
+ * - `student`: `file`이 곧 `ArtifactStore.publish`가 돌려준 값이다 — 절대 Blob URL이거나
+ *   public 루트 기준 상대 경로. 이미 도달 가능하므로 그대로 쓴다. 여기서 `clipartAssetKey`로
+ *   바꾸면 아무도 그 자리에 파일을 놓지 않는다.
+ *
+ * 앞 슬래시는 벗긴다. 이 저장소의 규약은 앞 슬래시 없는 public 루트 상대 경로이고
+ * (`generated-audio/ab.mp3`), `resolveAudioSrc`가 절대 URL과 상대 경로를 그 모양으로 가른다.
+ *
+ * 주소가 될 수 없는 값(빈 `file`)이면 빈 문자열을 돌려준다 — 호출자가 캐릭터 없는 씬으로
+ * 다룬다. 빈 src는 렌더러가 자기 origin을 그림으로 받아 오게 만든다.
+ */
+function characterUrl(entry: ClipartEntry): string {
+  if (entry.source === 'preset') return clipartAssetKey(entry);
+  return entry.file.trim().replace(/^\/+/, '');
+}
+
+/**
  * 세그먼트 텍스트를 씬 타입별 필드로 옮긴다. `span`은 세그먼트의 시간이 아니라 타일링된
  * 시간이다 — 버려진 빈 세그먼트와 세그먼트 사이의 틈까지 이웃 씬이 흡수한 뒤의 값이다.
+ *
+ * `characterImageUrl`은 모든 씬 타입이 공유하는 `SceneBase` 필드라 여기 `base`에 한 번만
+ * 넣는다. 씬 타입마다 따로 붙이면 한 타입을 빠뜨려도 아무 신호가 없다.
  */
 function sceneFromSegment(
   type: SceneType,
@@ -116,11 +141,13 @@ function sceneFromSegment(
   span: { startTime: number; endTime: number },
   sheet: StyleSheet,
   index: number,
+  characterImageUrl?: string,
 ): SceneDirective {
   const base = {
     ...span,
     colorAccent: sheet.palette.accent,
     backgroundImageUrl: pickBackground(sheet, index),
+    characterImageUrl,
   };
   const text = segment.text.trim();
 
@@ -177,6 +204,17 @@ function scriptTitleCard(
 }
 
 /**
+ * 씬만으로는 부족하다. 프리셋 그림은 `public/` 밖에 있어서 **누군가 렌더 전에 옮겨야** 하고,
+ * 그러려면 이번 릴스가 실제로 어떤 그림을 썼는지 알아야 한다. `usedClipart`가 그 목록이다
+ * (`worker/render.ts`의 `copyClipart`).
+ */
+export interface BuiltScenes {
+  scenes: SceneDirective[];
+  /** 이번 릴스에 실제로 붙은 클립아트. `id` 기준으로 중복이 없다 */
+  usedClipart: ClipartEntry[];
+}
+
+/**
  * 자막 세그먼트마다 씬을 하나씩 만든다. 타입은 `planSceneTypes`가 정하고, 여기서는
  * 그 계획과 세그먼트를 인덱스로 맞물려 텍스트를 씬 필드로 옮긴다.
  *
@@ -194,32 +232,54 @@ function scriptTitleCard(
  * 맞춰야 해서 빈 세그먼트에도 타입을 돌려주지만, 그대로 씬을 만들면 키워드가 빈 emphasis
  * 씬이 그 길이만큼 빈 화면으로 나간다. 계획을 세우기 **전에** 걸러 내므로 위치 규칙
  * (첫 세그먼트=타이틀, 마지막=마무리)도 살아남은 세그먼트 기준으로 제대로 적용된다.
+ *
+ * 캐릭터는 세그먼트 **텍스트**로 고른다(`matchClipart`). 매칭은 일부러 정밀한 쪽으로 기울어
+ * 있어서 보통 대본은 여섯 씬 중 두셋에만 캐릭터가 붙는다 — 그게 의도한 결과다. 나머지 씬은
+ * 캐릭터 없이 나가고, 그건 고장이 아니다(`lib/clipart-preset.ts`의 MIN_TERM_LENGTH 주석).
  */
 export function buildScenes(input: {
-  subtitles: SubtitleJSON; script: string; sheet: StyleSheet;
-}): SceneDirective[] {
-  const { subtitles, script, sheet } = input;
+  subtitles: SubtitleJSON; script: string; sheet: StyleSheet; catalog: ClipartEntry[];
+}): BuiltScenes {
+  const { subtitles, script, sheet, catalog } = input;
   const kept = subtitles.filter((segment) => segment.text.trim().length > 0);
-  if (!kept.length) return [scriptTitleCard(subtitles, script, sheet)];
+  // 최후 수단 카드는 대본 첫머리를 그대로 얹은 것이라 매칭할 세그먼트 자체가 없다
+  if (!kept.length) return { scenes: [scriptTitleCard(subtitles, script, sheet)], usedClipart: [] };
 
   const plan = planSceneTypes(kept);
   const audioEnd = subtitles[subtitles.length - 1].end;
 
-  return kept.map((segment, i) => sceneFromSegment(
-    plan[i],
-    segment,
-    {
-      startTime: i === 0 ? 0 : segment.start,
-      endTime: i === kept.length - 1 ? audioEnd : kept[i + 1].start,
-    },
-    sheet,
-    i,
-  ));
+  /**
+   * `id`로 중복을 없앤다. 같은 캐릭터가 세 씬에 걸리는 건 흔한 일이고(대본 하나가 한 가지
+   * 감정을 여러 번 말한다) 그때 파일을 세 번 옮길 이유는 없다. `Map`이라 카탈로그 순서,
+   * 곧 처음 걸린 순서가 그대로 남는다.
+   */
+  const used = new Map<string, ClipartEntry>();
+
+  const scenes = kept.map((segment, i) => {
+    const entry = matchClipart(segment.text, catalog);
+    const url = entry ? characterUrl(entry) : '';
+    // 주소가 없으면 쓰인 것으로 세지도 않는다 — 워커가 옮길 것이 없다
+    if (entry && url) used.set(entry.id, entry);
+
+    return sceneFromSegment(
+      plan[i],
+      segment,
+      {
+        startTime: i === 0 ? 0 : segment.start,
+        endTime: i === kept.length - 1 ? audioEnd : kept[i + 1].start,
+      },
+      sheet,
+      i,
+      url || undefined,
+    );
+  });
+
+  return { scenes, usedClipart: Array.from(used.values()) };
 }
 
 export async function generateScenes(input: {
-  script: string; subtitles: SubtitleJSON; sheet: StyleSheet;
-}): Promise<SceneDirective[]> {
+  script: string; subtitles: SubtitleJSON; sheet: StyleSheet; catalog: ClipartEntry[];
+}): Promise<BuiltScenes> {
   // 씬 전개는 규칙 기반이다: `planSceneTypes`가 세그먼트마다 씬 타입을 고르고 `buildScenes`가
   // 자막 텍스트를 그 타입의 필드로 옮긴다. 결정론적이고 API 키도 네트워크도 필요 없어서
   // 이 함수는 실패하지 않는다 — 그래서 async지만 await할 것이 없다.

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { buildScenes, generateScenes } from '../pipeline/scenes';
 import { planSceneTypes } from '../pipeline/scene-plan';
+import type { ClipartEntry } from '../clipart';
+import { clipartAssetKey } from '../clipart';
 import { STYLE_PRESETS } from '../style-sheet';
 import { getStaggerTiming } from '@studio/video/src/utils/animations';
 import type {
@@ -68,10 +70,19 @@ const sheet = {
   ownerId: 'u1', presetId: 'paper', styleSheetUrl: null, backgroundLibrary: ['/bg1.png'],
 };
 
+/**
+ * 캐릭터를 보지 않는 검사들이 쓰는 축약. `buildScenes`는 씬 배열과 함께 **쓰인 클립아트**를
+ * 돌려주는데(워커가 무엇을 복사할지 알아야 한다) 아래 검사들은 씬만 본다. 빈 카탈로그를
+ * 넘기므로 어떤 세그먼트에도 캐릭터가 붙지 않는다.
+ */
+const scenesOf = (
+  input: Omit<Parameters<typeof buildScenes>[0], 'catalog'>,
+): SceneDirective[] => buildScenes({ ...input, catalog: [] }).scenes;
+
 describe('buildScenes', () => {
   it('opens with a title card that starts where the audio starts', () => {
     const s = subs('무릎 통증', '이렇게 잡으세요');
-    const scenes = buildScenes({ subtitles: s, script: '무릎 통증 이렇게 잡으세요', sheet });
+    const scenes = scenesOf({ subtitles: s, script: '무릎 통증 이렇게 잡으세요', sheet });
     expect(scenes[0].type).toBe('title_card');
     expect(scenes[0].startTime).toBe(0);
     expect(scenes[scenes.length - 1].endTime).toBe(2);
@@ -79,12 +90,12 @@ describe('buildScenes', () => {
 
   it('uses the opening line as the title', () => {
     const s = subs('무릎 통증', '이렇게 잡으세요');
-    expect(asTitleCard(buildScenes({ subtitles: s, script: '대본', sheet })[0]).title)
+    expect(asTitleCard(scenesOf({ subtitles: s, script: '대본', sheet })[0]).title)
       .toBe('무릎 통증');
   });
 
   it('falls back to the script when there are no subtitles', () => {
-    const scenes = buildScenes({ subtitles: [], script: '무릎 통증 잡는 법', sheet });
+    const scenes = scenesOf({ subtitles: [], script: '무릎 통증 잡는 법', sheet });
     expect(asTitleCard(scenes[0]).title).toBe('무릎 통증 잡는 법');
     expect(scenes[0].endTime).toBeGreaterThan(0);
   });
@@ -95,16 +106,16 @@ describe('buildScenes', () => {
    */
   it('cuts a whole-script fallback title at a word boundary and marks it', () => {
     // 정확히 상한 길이인 대본은 자르지 않는다 — 말줄임표 자리를 무조건 떼면 여기서 잃는다
-    expect(asTitleCard(buildScenes({ subtitles: [], script: HEAD_AT_LIMIT, sheet })[0]).title)
+    expect(asTitleCard(scenesOf({ subtitles: [], script: HEAD_AT_LIMIT, sheet })[0]).title)
       .toBe(HEAD_AT_LIMIT);
 
     const long = 'ㄱ'.repeat(200);
-    expect(asTitleCard(buildScenes({ subtitles: [], script: long, sheet })[0]).title.length)
+    expect(asTitleCard(scenesOf({ subtitles: [], script: long, sheet })[0]).title.length)
       .toBeLessThanOrEqual(HEADLINE_LIMIT);
 
     const words = Array.from({ length: 60 }, (_, i) => `낱말${i}`);
     const title = asTitleCard(
-      buildScenes({ subtitles: [], script: words.join(' '), sheet })[0],
+      scenesOf({ subtitles: [], script: words.join(' '), sheet })[0],
     ).title;
     expect(title.endsWith('…')).toBe(true);
     // 잘린 자리 앞은 언제나 온전한 어절이다 — `낱말1` 이 `낱말` 로 끝나면 안 된다
@@ -115,12 +126,12 @@ describe('buildScenes', () => {
 
   it('makes one scene per subtitle segment', () => {
     const s = subs('제목입니다', '본문을 조금 길게 적어봅니다 여기가 내용입니다', '마무리합니다');
-    expect(buildScenes({ subtitles: s, script: '대본', sheet })).toHaveLength(3);
+    expect(scenesOf({ subtitles: s, script: '대본', sheet })).toHaveLength(3);
   });
 
   it('covers the whole audio without gaps', () => {
     const s = subs('제목입니다', '본문입니다 조금 길게 씁니다', '마무리합니다');
-    const scenes = buildScenes({ subtitles: s, script: '대본', sheet });
+    const scenes = scenesOf({ subtitles: s, script: '대본', sheet });
     expect(scenes[0].startTime).toBe(s[0].start);
     expect(scenes[scenes.length - 1].endTime).toBe(s[s.length - 1].end);
     for (let i = 1; i < scenes.length; i++) {
@@ -129,7 +140,7 @@ describe('buildScenes', () => {
   });
 
   it('still returns a title card when there are no subtitles', () => {
-    const scenes = buildScenes({ subtitles: [], script: '무릎 통증 잡는 법', sheet });
+    const scenes = scenesOf({ subtitles: [], script: '무릎 통증 잡는 법', sheet });
     expect(scenes).toHaveLength(1);
     expect(scenes[0].type).toBe('title_card');
   });
@@ -141,7 +152,7 @@ describe('buildScenes', () => {
       { id: 0, text: '제목', start: 0, end: 1, words: [] },
       { id: 1, text: '마무리합니다', start: 1.4, end: 2.5, words: [] },
     ];
-    const scenes = buildScenes({ subtitles: s, script: '대본', sheet });
+    const scenes = scenesOf({ subtitles: s, script: '대본', sheet });
     expect(scenes[0].endTime).toBe(1.4);
     expect(scenes[1].endTime).toBe(2.5);
   });
@@ -155,7 +166,7 @@ describe('buildScenes', () => {
       { id: 1, text: '이렇게 잡으세요 지금부터', start: 2.2, end: 3.4, words: [] },
       { id: 2, text: '마무리합니다', start: 3.4, end: 5, words: [] },
     ];
-    const scenes = buildScenes({ subtitles: s, script: '대본', sheet });
+    const scenes = scenesOf({ subtitles: s, script: '대본', sheet });
     expect(scenes[0].startTime).toBe(0);
     expect(scenes.map((scene) => [scene.startTime, scene.endTime]))
       .toEqual([[0, 2.2], [2.2, 3.4], [3.4, 5]]);
@@ -167,7 +178,7 @@ describe('buildScenes', () => {
       { id: 1, text: '   ', start: 2, end: 2.6, words: [] },
       { id: 2, text: '마무리합니다', start: 2.9, end: 4.5, words: [] },
     ];
-    const scenes = buildScenes({ subtitles: s, script: '대본', sheet });
+    const scenes = scenesOf({ subtitles: s, script: '대본', sheet });
     expect(scenes[0].startTime).toBe(0);
     expect(scenes[scenes.length - 1].endTime).toBe(s[s.length - 1].end);
     for (let i = 1; i < scenes.length; i++) {
@@ -184,7 +195,7 @@ describe('buildScenes', () => {
       '천천히 내려가면서 호흡을 뱉어 주세요',
       '마무리',
     );
-    const scenes = buildScenes({ subtitles: s, script: '대본', sheet });
+    const scenes = scenesOf({ subtitles: s, script: '대본', sheet });
     expect(scenes.map((scene) => scene.type)).toEqual(planSceneTypes(s));
     expect(scenes.map((scene) => scene.type)).toEqual([
       'title_card', 'list_reveal', 'quote', 'emphasis', 'content_slide', 'conclusion',
@@ -194,14 +205,14 @@ describe('buildScenes', () => {
   it('cycles the background library so consecutive scenes differ', () => {
     const twoBg = { ...sheet, backgroundLibrary: ['/bg1.png', '/bg2.png'] };
     const s = subs('제목', '본문을 조금 길게 적어봅니다', '마무리');
-    const scenes = buildScenes({ subtitles: s, script: '대본', sheet: twoBg });
+    const scenes = scenesOf({ subtitles: s, script: '대본', sheet: twoBg });
     expect(scenes.map((scene) => scene.backgroundImageUrl))
       .toEqual(['/bg1.png', '/bg2.png', '/bg1.png']);
   });
 
   it('strips quotation marks out of a quote scene', () => {
     const s = subs('제목', '코치가 "무릎은 발끝을 따라간다"고 했습니다', '끝');
-    const scenes = buildScenes({ subtitles: s, script: '대본', sheet });
+    const scenes = scenesOf({ subtitles: s, script: '대본', sheet });
     expect(scenes[1].type).toBe('quote');
     expect(primaryText(scenes[1])).toBe('코치가 무릎은 발끝을 따라간다고 했습니다');
   });
@@ -214,13 +225,13 @@ describe('buildScenes', () => {
  */
 describe('buildScenes — 빈 세그먼트', () => {
   it('does not make a scene for a whitespace-only segment', () => {
-    const scenes = buildScenes({ subtitles: subs('제목', '   ', '마무리'), script: '대본', sheet });
+    const scenes = scenesOf({ subtitles: subs('제목', '   ', '마무리'), script: '대본', sheet });
     expect(scenes).toHaveLength(2);
     expect(scenes.map((s) => s.type)).toEqual(['title_card', 'conclusion']);
   });
 
   it('hands the span of a dropped segment to the scene before it', () => {
-    const scenes = buildScenes({ subtitles: subs('제목', '   ', '마무리'), script: '대본', sheet });
+    const scenes = scenesOf({ subtitles: subs('제목', '   ', '마무리'), script: '대본', sheet });
     expect(scenes[0].startTime).toBe(0);
     expect(scenes[0].endTime).toBe(2);
     expect(scenes[1].startTime).toBe(2);
@@ -228,20 +239,20 @@ describe('buildScenes — 빈 세그먼트', () => {
   });
 
   it('absorbs a leading blank segment into the first real scene', () => {
-    const scenes = buildScenes({ subtitles: subs('  ', '제목', '마무리'), script: '대본', sheet });
+    const scenes = scenesOf({ subtitles: subs('  ', '제목', '마무리'), script: '대본', sheet });
     expect(scenes[0].startTime).toBe(0);
     expect(asTitleCard(scenes[0]).title).toBe('제목');
   });
 
   it('absorbs a trailing blank segment into the last real scene', () => {
     const s = subs('제목', '마무리합니다', '   ');
-    const scenes = buildScenes({ subtitles: s, script: '대본', sheet });
+    const scenes = scenesOf({ subtitles: s, script: '대본', sheet });
     expect(scenes[scenes.length - 1].endTime).toBe(3);
   });
 
   it('still tiles the whole audio when blanks are dropped', () => {
     const s = subs('', '제목입니다', '  ', '본문을 조금 길게 적어봅니다', '\t', '마무리합니다', ' ');
-    const scenes = buildScenes({ subtitles: s, script: '대본', sheet });
+    const scenes = scenesOf({ subtitles: s, script: '대본', sheet });
     expect(scenes).toHaveLength(3);
     expect(scenes[0].startTime).toBe(s[0].start);
     expect(scenes[scenes.length - 1].endTime).toBe(s[s.length - 1].end);
@@ -252,17 +263,17 @@ describe('buildScenes — 빈 세그먼트', () => {
 
   it('never hands the renderer a scene with no text', () => {
     const s = subs('제목', '  ', '짧아요', '', '첫째 준비, 둘째 하강', '   ', '마무리합니다');
-    for (const scene of buildScenes({ subtitles: s, script: '대본', sheet })) {
+    for (const scene of scenesOf({ subtitles: s, script: '대본', sheet })) {
       expect(primaryText(scene)).not.toBe('');
     }
   });
 
   it('falls back to one title card when every segment is blank', () => {
     const late: SubtitleJSON = [{ id: 0, text: '  ', start: 0.8, end: 2, words: [] }];
-    expect(buildScenes({ subtitles: late, script: '대본', sheet })[0].startTime).toBe(0);
+    expect(scenesOf({ subtitles: late, script: '대본', sheet })[0].startTime).toBe(0);
 
     const s = subs('', '   ');
-    const scenes = buildScenes({ subtitles: s, script: '무릎 통증 잡는 법', sheet });
+    const scenes = scenesOf({ subtitles: s, script: '무릎 통증 잡는 법', sheet });
     expect(scenes).toHaveLength(1);
     expect(asTitleCard(scenes[0]).title).toBe('무릎 통증 잡는 법');
     expect(scenes[0].startTime).toBe(0);
@@ -284,7 +295,7 @@ describe('buildScenes — 목록', () => {
       { id: 1, text: '하나, 둘, 셋, 넷, 다섯, 여섯, 일곱, 여덟', start: 1, end: 2.5, words: [] },
       { id: 2, text: '끝', start: 2.5, end: 3.5, words: [] },
     ];
-    const scene = asList(buildScenes({ subtitles: s, script: '대본', sheet })[1]);
+    const scene = asList(scenesOf({ subtitles: s, script: '대본', sheet })[1]);
     expect(scene.items).toEqual(['하나', '둘', '셋', '넷', '다섯']);
 
     const frames = Math.round((scene.endTime - scene.startTime) * 30);
@@ -294,20 +305,20 @@ describe('buildScenes — 목록', () => {
 
   it('splits on ordinals and drops empty items', () => {
     const s = subs('제목', '첫째 준비,, 둘째 하강, , 셋째 상승', '끝');
-    expect(asList(buildScenes({ subtitles: s, script: '대본', sheet })[1]).items)
+    expect(asList(scenesOf({ subtitles: s, script: '대본', sheet })[1]).items)
       .toEqual(['준비', '하강', '상승']);
   });
 
   it('uses the words before the first ordinal as the list title', () => {
     const s = subs('제목', '순서는 이렇습니다 첫째 준비, 둘째 하강, 셋째 상승', '끝');
-    const scene = asList(buildScenes({ subtitles: s, script: '대본', sheet })[1]);
+    const scene = asList(scenesOf({ subtitles: s, script: '대본', sheet })[1]);
     expect(scene.title).toBe('순서는 이렇습니다');
     expect(scene.items).toEqual(['준비', '하강', '상승']);
   });
 
   it('leaves the title empty for a comma-only list, since the lead is itself an item', () => {
     const s = subs('제목', '어깨를 펴고, 무릎을 세우고, 천천히 내려갑니다', '끝');
-    const scene = asList(buildScenes({ subtitles: s, script: '대본', sheet })[1]);
+    const scene = asList(scenesOf({ subtitles: s, script: '대본', sheet })[1]);
     expect(scene.title).toBe('');
     expect(scene.items).toEqual(['어깨를 펴고', '무릎을 세우고', '천천히 내려갑니다']);
   });
@@ -316,14 +327,14 @@ describe('buildScenes — 목록', () => {
 describe('buildScenes — 본문 슬라이드', () => {
   it('gives a content slide a heading rather than an empty one', () => {
     const s = subs('제목', '발바닥을 바닥에 고르게 누르고 천천히 내려가세요', '끝');
-    const scene = asContent(buildScenes({ subtitles: s, script: '대본', sheet })[1]);
+    const scene = asContent(scenesOf({ subtitles: s, script: '대본', sheet })[1]);
     expect(scene.heading).toBe('발바닥을 바닥에 고르게 누르고 천천히 내려가세요');
     expect(scene.bullets).toEqual([]);
   });
 
   it('splits a clause off as the heading and keeps the rest as bullets', () => {
     const s = subs('제목', '어깨를 활짝 펴고, 무릎을 천천히 굽혀 주세요', '끝');
-    const scene = asContent(buildScenes({ subtitles: s, script: '대본', sheet })[1]);
+    const scene = asContent(scenesOf({ subtitles: s, script: '대본', sheet })[1]);
     expect(scene.heading).toBe('어깨를 활짝 펴고');
     expect(scene.bullets).toEqual(['무릎을 천천히 굽혀 주세요']);
   });
@@ -333,7 +344,7 @@ describe('buildScenes — 본문 슬라이드', () => {
     // 그래서 "첫 절이 긴" 문장이 이 씬 타입의 보통 모양이고, 여기서 잘라 버리면 릴스마다
     // 문장 끝이 조용히 사라진다. 쉼표 갈래도 쉼표 없는 갈래와 같은 규칙이어야 한다.
     const line = '천천히 숨을 내쉬면서 무릎이 발끝을 넘지 않도록 아주 조금씩 버티며 내려가세요, 그리고 다시 올라옵니다';
-    const scene = asContent(buildScenes({ subtitles: subs('제목', line, '끝'), script: '대본', sheet })[1]);
+    const scene = asContent(scenesOf({ subtitles: subs('제목', line, '끝'), script: '대본', sheet })[1]);
     expect(scene.heading.length).toBeLessThanOrEqual(40);
     expect([scene.heading, ...scene.bullets].join(' ').split(/\s+/).filter(Boolean))
       .toEqual(line.split(/[\s,]+/).filter(Boolean));
@@ -341,7 +352,7 @@ describe('buildScenes — 본문 슬라이드', () => {
 
   it('moves the tail of a long sentence into a bullet instead of dropping it', () => {
     const line = '천천히 숨을 내쉬면서 무릎이 발끝을 넘지 않도록 주의하며 아주 조금씩 내려가세요';
-    const scene = asContent(buildScenes({ subtitles: subs('제목', line, '끝'), script: '대본', sheet })[1]);
+    const scene = asContent(scenesOf({ subtitles: subs('제목', line, '끝'), script: '대본', sheet })[1]);
     expect(scene.heading).not.toBe('');
     expect(scene.heading.length).toBeLessThanOrEqual(40);
     expect(`${scene.heading} ${scene.bullets.join(' ')}`).toBe(line);
@@ -368,7 +379,7 @@ describe('buildScenes — 표제 카드', () => {
   it('keeps a real whisper segment whole on the opening frame', () => {
     for (const line of REAL_SEGMENTS) {
       const card = asTitleCard(
-        buildScenes({ subtitles: subs(line, '끝'), script: '대본', sheet })[0],
+        scenesOf({ subtitles: subs(line, '끝'), script: '대본', sheet })[0],
       );
       expect(card.title).toBe(line);
       expect(card.subtitle).toBeUndefined();
@@ -377,7 +388,7 @@ describe('buildScenes — 표제 카드', () => {
 
   it('keeps a real whisper segment whole on the closing frame', () => {
     for (const line of REAL_SEGMENTS) {
-      const scenes = buildScenes({ subtitles: subs('제목', line), script: '대본', sheet });
+      const scenes = scenesOf({ subtitles: subs('제목', line), script: '대본', sheet });
       const card = asConclusion(scenes[scenes.length - 1]);
       expect(card.heading).toBe(line);
       expect(card.callToAction).toBeUndefined();
@@ -385,7 +396,7 @@ describe('buildScenes — 표제 카드', () => {
   });
 
   it('moves an overflowing opening line into the subtitle instead of dropping it', () => {
-    const card = asTitleCard(buildScenes({ subtitles: subs(LONG, '끝'), script: '대본', sheet })[0]);
+    const card = asTitleCard(scenesOf({ subtitles: subs(LONG, '끝'), script: '대본', sheet })[0]);
     expect(card.title).not.toBe('');
     expect(card.title.length).toBeLessThanOrEqual(HEADLINE_LIMIT);
     expect(card.subtitle).toBeTruthy();
@@ -393,7 +404,7 @@ describe('buildScenes — 표제 카드', () => {
   });
 
   it('moves an overflowing closing line into the call to action instead of dropping it', () => {
-    const scenes = buildScenes({ subtitles: subs('제목', LONG), script: '대본', sheet });
+    const scenes = scenesOf({ subtitles: subs('제목', LONG), script: '대본', sheet });
     const card = asConclusion(scenes[scenes.length - 1]);
     expect(card.heading).not.toBe('');
     expect(card.heading.length).toBeLessThanOrEqual(HEADLINE_LIMIT);
@@ -404,7 +415,7 @@ describe('buildScenes — 표제 카드', () => {
   it('keeps an opening line of exactly the headline limit whole', () => {
     expect(HEAD_AT_LIMIT).toHaveLength(HEADLINE_LIMIT);
     const card = asTitleCard(
-      buildScenes({ subtitles: subs(HEAD_AT_LIMIT, '끝'), script: '대본', sheet })[0],
+      scenesOf({ subtitles: subs(HEAD_AT_LIMIT, '끝'), script: '대본', sheet })[0],
     );
     expect(card.title).toBe(HEAD_AT_LIMIT);
     expect(card.subtitle).toBeUndefined();
@@ -416,14 +427,14 @@ describe('buildScenes — 표제 카드', () => {
    */
   it('bounds the overflow tail instead of moving the problem to the second line', () => {
     const card = asTitleCard(
-      buildScenes({ subtitles: subs(FAR_OVERFLOW, '끝'), script: '대본', sheet })[0],
+      scenesOf({ subtitles: subs(FAR_OVERFLOW, '끝'), script: '대본', sheet })[0],
     );
     const sub = card.subtitle ?? '';
     expect(sub.length).toBeGreaterThan(0);
     expect(sub.length).toBeLessThanOrEqual(TAIL_LIMIT);
     expect(sub.endsWith('…')).toBe(true);
 
-    const scenes = buildScenes({ subtitles: subs('제목', FAR_OVERFLOW), script: '대본', sheet });
+    const scenes = scenesOf({ subtitles: subs('제목', FAR_OVERFLOW), script: '대본', sheet });
     const cta = asConclusion(scenes[scenes.length - 1]).callToAction ?? '';
     expect(cta.length).toBeGreaterThan(0);
     expect(cta.length).toBeLessThanOrEqual(TAIL_LIMIT);
@@ -432,8 +443,8 @@ describe('buildScenes — 표제 카드', () => {
 
   it('never cuts a 어절 in half', () => {
     const words = wordsOf(LONG);
-    const card = asTitleCard(buildScenes({ subtitles: subs(LONG, '끝'), script: '대본', sheet })[0]);
-    const scenes = buildScenes({ subtitles: subs('제목', LONG), script: '대본', sheet });
+    const card = asTitleCard(scenesOf({ subtitles: subs(LONG, '끝'), script: '대본', sheet })[0]);
+    const scenes = scenesOf({ subtitles: subs('제목', LONG), script: '대본', sheet });
     const close = asConclusion(scenes[scenes.length - 1]);
     for (const word of [...wordsOf(card.title), ...wordsOf(close.heading)]) {
       expect(words).toContain(word);
@@ -452,7 +463,7 @@ describe('buildScenes — 자르기 경계', () => {
   it('keeps a list lead-in of exactly the limit whole', () => {
     expect(LEAD_AT_LIMIT).toHaveLength(TITLE_LIMIT);
     const s = subs('제목', listLine(LEAD_AT_LIMIT), '끝');
-    expect(asList(buildScenes({ subtitles: s, script: '대본', sheet })[1]).title)
+    expect(asList(scenesOf({ subtitles: s, script: '대본', sheet })[1]).title)
       .toBe(LEAD_AT_LIMIT);
   });
 
@@ -460,7 +471,7 @@ describe('buildScenes — 자르기 경계', () => {
     const over = `${LEAD_AT_LIMIT}자`;
     expect(over.length).toBeGreaterThan(TITLE_LIMIT);
     const s = subs('제목', listLine(over), '끝');
-    const title = asList(buildScenes({ subtitles: s, script: '대본', sheet })[1]).title;
+    const title = asList(scenesOf({ subtitles: s, script: '대본', sheet })[1]).title;
 
     expect(title.length).toBeLessThanOrEqual(TITLE_LIMIT);
     expect(title.endsWith('…')).toBe(true);
@@ -471,10 +482,118 @@ describe('buildScenes — 자르기 경계', () => {
   });
 });
 
+/**
+ * 씬에 캐릭터를 붙이는 규칙의 표본. 매칭 자체는 `lib/__tests__/clipart.test.ts`가 검사하므로
+ * 아래 검사들은 **붙는 자리와 주소의 모양**만 본다 — 이 둘이 어긋나면 렌더는 성공하는데
+ * 그림만 조용히 빠진다.
+ */
+const PRESET_CATALOG: ClipartEntry[] = [{
+  id: 'c1', ownerId: '__preset__', keyword: '걱정', aliases: ['불안'],
+  category: '감정', source: 'preset', file: 'assets/clipart/걱정.png',
+}];
+
+const studentEntry = (file: string): ClipartEntry => ({
+  id: 'c2', ownerId: 'u1', keyword: '걱정', aliases: [],
+  category: '감정', source: 'student', file,
+});
+
 describe('generateScenes', () => {
   it('returns the rule-built scenes', async () => {
     const s = subs('제목입니다', '본문을 조금 길게 적어봅니다', '마무리합니다');
-    await expect(generateScenes({ script: '대본', subtitles: s, sheet }))
-      .resolves.toEqual(buildScenes({ subtitles: s, script: '대본', sheet }));
+    await expect(generateScenes({ script: '대본', subtitles: s, sheet, catalog: [] }))
+      .resolves.toEqual(buildScenes({ subtitles: s, script: '대본', sheet, catalog: [] }));
+  });
+
+  it('carries the matched clipart through to the caller', async () => {
+    const s = subs('제목', '많이 걱정하시죠 무릎 통증 때문에', '끝');
+    const { usedClipart } = await generateScenes({
+      script: '대본', subtitles: s, sheet, catalog: PRESET_CATALOG,
+    });
+    expect(usedClipart).toEqual([PRESET_CATALOG[0]]);
+  });
+});
+
+describe('buildScenes — 캐릭터', () => {
+  it('attaches a character when the text matches', () => {
+    const s = subs('제목', '많이 걱정하시죠 무릎 통증 때문에', '끝');
+    const { scenes, usedClipart } = buildScenes({
+      subtitles: s, script: '대본', sheet, catalog: PRESET_CATALOG,
+    });
+    expect(scenes[1].characterImageUrl).toMatch(/^clipart\//);
+    expect(usedClipart.map((c) => c.keyword)).toEqual(['걱정']);
+  });
+
+  it('leaves a scene without a character when nothing matches', () => {
+    const s = subs('제목', '발바닥을 바닥에 고르게 누르세요 천천히', '끝');
+    const { scenes, usedClipart } = buildScenes({
+      subtitles: s, script: '대본', sheet, catalog: PRESET_CATALOG,
+    });
+    expect(scenes[1].characterImageUrl).toBeUndefined();
+    expect(usedClipart).toEqual([]);
+  });
+
+  // 같은 그림을 세 씬이 쓰면 복사는 한 번이면 된다. 워커가 이 목록만큼 파일을 옮긴다.
+  it('reports a repeated clipart only once', () => {
+    const s = subs('제목', '걱정이 됩니다 정말 많이', '걱정하지 마세요 괜찮습니다', '끝');
+    expect(buildScenes({
+      subtitles: s, script: '대본', sheet, catalog: PRESET_CATALOG,
+    }).usedClipart).toHaveLength(1);
+  });
+
+  /**
+   * 프리셋 그림은 `public/` **밖**에 있으므로 렌더 전에 복사되고, 씬은 그 복사본의 자리를
+   * 가리킨다. 원본 경로(`assets/clipart/걱정.png`)를 그대로 넘기면 렌더러가 찾지 못한다.
+   */
+  it('points a preset scene at the copied asset key, not the source path', () => {
+    const s = subs('제목', '많이 걱정하시죠 무릎 통증 때문에', '끝');
+    const { scenes } = buildScenes({
+      subtitles: s, script: '대본', sheet, catalog: PRESET_CATALOG,
+    });
+    expect(scenes[1].characterImageUrl).toBe(clipartAssetKey(PRESET_CATALOG[0]));
+  });
+
+  /**
+   * 수강생 그림은 다르다. `file`은 `ArtifactStore.publish`가 돌려준 값이라 이미 도달
+   * 가능하다 — 배포에서는 절대 Blob URL이고, 로컬에서는 public 루트 기준 상대 경로다.
+   * 여기서 `clipartAssetKey`로 바꿔 버리면 아무도 그 자리에 파일을 놓지 않아 그림이 사라진다.
+   */
+  it('hands a student image straight through — publish already made it reachable', () => {
+    const s = subs('제목', '많이 걱정하시죠 무릎 통증 때문에', '끝');
+    const relative = buildScenes({
+      subtitles: s, script: '대본', sheet, catalog: [studentEntry('clipart/ab12.png')],
+    });
+    expect(relative.scenes[1].characterImageUrl).toBe('clipart/ab12.png');
+
+    const remote = buildScenes({
+      subtitles: s, script: '대본', sheet, catalog: [studentEntry('https://cdn.test/ab12.png')],
+    });
+    expect(remote.scenes[1].characterImageUrl).toBe('https://cdn.test/ab12.png');
+  });
+
+  // 앞 슬래시가 붙은 경로는 Remotion이 번들 origin이 아니라 다른 자리를 찾는다.
+  it('strips a leading slash from a student path', () => {
+    const s = subs('제목', '많이 걱정하시죠 무릎 통증 때문에', '끝');
+    const { scenes } = buildScenes({
+      subtitles: s, script: '대본', sheet, catalog: [studentEntry('/clipart/ab12.png')],
+    });
+    expect(scenes[1].characterImageUrl).toBe('clipart/ab12.png');
+  });
+
+  // 빈 `file`은 주소가 아니다. 붙여 봐야 렌더러가 자기 origin을 그림으로 받는다.
+  it('ignores an entry with no file', () => {
+    const s = subs('제목', '많이 걱정하시죠 무릎 통증 때문에', '끝');
+    const { scenes, usedClipart } = buildScenes({
+      subtitles: s, script: '대본', sheet, catalog: [studentEntry('   ')],
+    });
+    expect(scenes[1].characterImageUrl).toBeUndefined();
+    expect(usedClipart).toEqual([]);
+  });
+
+  it('gives the fallback title card no character', () => {
+    const { scenes, usedClipart } = buildScenes({
+      subtitles: [], script: '많이 걱정하시죠', sheet, catalog: PRESET_CATALOG,
+    });
+    expect(scenes[0].characterImageUrl).toBeUndefined();
+    expect(usedClipart).toEqual([]);
   });
 });

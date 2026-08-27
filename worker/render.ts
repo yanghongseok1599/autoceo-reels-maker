@@ -1,7 +1,10 @@
 import { bundle } from '@remotion/bundler';
 import { renderMedia, selectComposition } from '@remotion/renderer';
+import { copyFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { appPublicDir } from '../lib/paths';
+import { clipartAssetKey, type ClipartEntry } from '../lib/clipart';
+import { presetDir } from '../lib/clipart-preset';
 import type { ReelProps } from '@studio/video/src/types';
 
 let bundlePromise: Promise<string> | null = null;
@@ -33,6 +36,34 @@ function getBundle(): Promise<string> {
     symlinkPublicDir: true,
   });
   return bundlePromise;
+}
+
+/**
+ * 이번 릴스에 실제로 쓰인 클립아트만 렌더 publicDir로 옮긴다.
+ *
+ * **두 source는 대칭이 아니다.**
+ * - `preset`: `file`이 운영자 프리셋 디렉터리(`presetDir()`) 기준 상대 경로다. 그 디렉터리는
+ *   `public/` 밖에 있어 렌더러가 닿지 못하고, 118MB라 저장소에 넣을 수도 없다. 여기서
+ *   옮기는 것은 **이 경우뿐이다.**
+ * - `student`: `file`이 `ArtifactStore.publish`가 돌려준 값이다 — 배포에서는 절대 Blob URL,
+ *   로컬에서는 public 루트 기준 상대 경로. 둘 다 이미 도달 가능하므로 복사할 원본 자체가
+ *   없다. 굳이 복사하려 들면 프리셋 디렉터리에서 엉뚱한 이름을 찾다 조용히 실패한다.
+ *
+ * 원본이 없거나 읽히지 않으면 건너뛴다. 캐릭터가 빠진 릴스는 괜찮은 릴스지만, 렌더가
+ * 실패한 릴스는 아무것도 아니다 — 무게가 다르다. 한 항목이 실패해도 나머지는 계속 옮긴다.
+ */
+export async function copyClipart(entries: ClipartEntry[], publicDir: string): Promise<void> {
+  for (const entry of entries) {
+    // 수강생 이미지는 publish가 이미 도달 가능하게 뒀다
+    if (entry.source !== 'preset') continue;
+    const target = path.join(publicDir, clipartAssetKey(entry));
+    try {
+      await mkdir(path.dirname(target), { recursive: true });
+      await copyFile(path.join(presetDir(), entry.file), target);
+    } catch {
+      // 원본 없음 — 이 씬은 캐릭터 없이 렌더된다
+    }
+  }
 }
 
 export async function renderReel(props: ReelProps, outPath: string): Promise<void> {

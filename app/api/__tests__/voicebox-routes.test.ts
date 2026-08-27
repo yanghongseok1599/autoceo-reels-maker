@@ -5,19 +5,31 @@ import path from 'node:path';
 import { GET as profilesRoute } from '../voicebox/profiles/route';
 import { signSession } from '@/lib/auth';
 import { store } from '@/lib/store';
-import { listFishVoices, type FishVoiceProfile } from '@/lib/fish-voice-store';
+import {
+  listFishVoices, upsertFishVoice, type FishVoiceProfile,
+} from '@/lib/fish-voice-store';
 
 const voice = (id: string, ownerId: string): FishVoiceProfile => ({
   id, ownerId, name: `${ownerId}의 목소리`, language: 'ko', sampleCount: 1,
   createdAt: '2026-08-26T00:00:00Z',
 });
 
+/**
+ * 목소리는 이제 소유자별 키(`fish-voices/<ownerId>`)에 들어간다. 예전처럼 공유 배열
+ * 하나에 심어 두면 라우트는 **없는 키의 fallback**을 읽어, 무엇을 심었든 늘 빈 목록을
+ * 보게 된다 — 경계 검사가 통과만 하는 빈 검사로 조용히 바뀐다. 그래서 저장소 모양을
+ * 여기서 다시 적지 않고 실제 저장 경로로 심는다.
+ */
+async function seed(...voices: FishVoiceProfile[]) {
+  for (const v of voices) await upsertFishVoice(v);
+}
+
 beforeEach(async () => {
   process.env.SESSION_SECRET = 'test-session-secret';
   process.env.FISH_API_KEY = 'test-fish-key';
   // 합성 결과 mp3가 저장소의 실제 public/으로 새어 나가지 않게 한다.
   process.env.PUBLIC_DIR = mkdtempSync(path.join(os.tmpdir(), 'reels-public-'));
-  await store.write('fish-voices', []);
+  // 저장소는 `vitest.setup.ts`가 테스트마다 새 `STORE_DIR`을 주므로 따로 비울 것이 없다.
 });
 
 afterEach(() => {
@@ -53,19 +65,22 @@ describe('GET /api/voicebox/profiles', () => {
    * 그 id를 그대로 렌더 요청에 쓸 수 있다.
    */
   it("excludes another student's cloned voice", async () => {
-    await store.write('fish-voices', [voice('mine', 'u1'), voice('theirs', 'u2')]);
+    await seed(voice('mine', 'u1'), voice('theirs', 'u2'));
     const { status, body } = await list('u1');
     expect(status).toBe(200);
     expect(body.profiles.map((p: { id: string }) => p.id)).toEqual(['mine']);
   });
 
   it('gives each student their own list', async () => {
-    await store.write('fish-voices', [voice('mine', 'u1'), voice('theirs', 'u2')]);
+    await seed(voice('mine', 'u1'), voice('theirs', 'u2'));
     expect((await list('u2')).body.profiles.map((p: { id: string }) => p.id)).toEqual(['theirs']);
   });
 
   it('returns an empty list for a student who has cloned nothing', async () => {
-    await store.write('fish-voices', [voice('theirs', 'u2')]);
+    await seed(voice('theirs', 'u2'));
+    // u2에게는 실제로 목소리가 있다(`seed`가 진짜 저장 경로로 심는다). 그러니 이 빈 목록은
+    // "아무것도 안 심겨서"가 아니라 소유자 경계 때문이다.
+    expect((await list('u2')).body.profiles.map((p: { id: string }) => p.id)).toEqual(['theirs']);
     expect((await list('u1')).body.profiles).toEqual([]);
   });
 
@@ -74,7 +89,7 @@ describe('GET /api/voicebox/profiles', () => {
    * 넣었다. 모든 수강생의 기본 선택이 운영자 목소리가 됐다는 뜻이다.
    */
   it('never injects the operator env voice into a student list', async () => {
-    await store.write('fish-voices', [voice('mine', 'u1')]);
+    await seed(voice('mine', 'u1'));
     process.env.FISH_REFERENCE_ID = 'operator-voice';
     vi.resetModules();
     try {
@@ -158,7 +173,9 @@ describe('POST /api/voicebox/clone', () => {
     expect(res.status).toBe(200);
     expect((await res.json()).id).toBe('voice_u1');
 
-    const stored = await store.read<FishVoiceProfile[]>('fish-voices', []);
+    // 호출자의 키를 직접 본다. 공유 키를 읽으면 이제 없는 키의 fallback이 와서
+    // 라우트가 무엇을 저장했든 통과하는 빈 검사가 된다.
+    const stored = await store.read<FishVoiceProfile[]>('fish-voices/u1', []);
     expect(stored).toHaveLength(1);
     expect(stored[0].ownerId).toBe('u1');
   });
@@ -217,7 +234,7 @@ describe.each([
   }
 
   beforeEach(async () => {
-    await store.write('fish-voices', [voice('mine', 'u1'), voice('theirs', 'u2')]);
+    await seed(voice('mine', 'u1'), voice('theirs', 'u2'));
   });
 
   it('rejects an unauthenticated request', async () => {
@@ -262,11 +279,15 @@ describe.each([
     expect((await res.json()).error).toContain('사용할 수 없는');
   });
 
+  /**
+   * 아무것도 클론하지 않은 수강생이다. 예전에는 공유 배열을 덮어써서 u1의 목소리를
+   * 지웠지만, 키가 나뉜 지금은 남의 키를 덮어 지우는 방법이 없다(그게 이 변경의 요점이다).
+   * 그래서 애초에 심지 않은 수강생으로 부른다 — 저장소 모양과 무관한 검사가 된다.
+   */
   it('refuses when the caller has registered no voice at all', async () => {
-    await store.write('fish-voices', [voice('theirs', 'u2')]);
     stubFishTts();
     const POST = await loadRoute();
-    const res = await POST(req('theirs', 'u1'));
+    const res = await POST(req('theirs', 'u3'));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toContain('목소리를 먼저 등록');
   });

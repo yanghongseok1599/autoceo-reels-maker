@@ -23,7 +23,8 @@ beforeEach(async () => {
   process.env.SESSION_SECRET = 'test-session-secret';
   await resetStoreForTests();
   await store.write('students', [student('u1'), student('u2')]);
-  await store.write('fish-voices', []);
+  // 목소리는 이제 소유자별 키에 들어가므로 비울 공유 배열이 없다. 이 파일은 목소리를
+  // `upsertFishVoice`로 심고, `STORE_DIR`은 테스트마다 새것이다(`vitest.setup.ts`).
 });
 
 function req(body: unknown, studentId?: string) {

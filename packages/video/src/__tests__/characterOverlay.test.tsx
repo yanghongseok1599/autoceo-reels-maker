@@ -59,10 +59,12 @@ describe('SceneRouter — 캐릭터 오버레이', () => {
    */
   it('paints the character with the exact measured box', () => {
     const html = markup({ scenes: [{ ...scene, characterImageUrl: 'characters/s1.png' }] });
-    expect(html).toContain('width:360px');
-    expect(html).toContain('height:200px');
+    expect(html).toContain('width:620px');
+    expect(html).toContain('height:620px');
     expect(html).toContain('object-fit:contain');
-    expect(html).toContain('padding-bottom:420px');
+    // contain이 남기는 여백을 아래로 몰지 않으면 정사각·가로 원본이 바닥에서 뜬다
+    expect(html).toContain('object-position:bottom');
+    expect(html).toContain('padding-bottom:0');
   });
 });
 
@@ -72,11 +74,11 @@ describe('SceneRouter — 캐릭터 오버레이', () => {
  */
 describe('캐릭터 상자 기하', () => {
   it('pins the literal box constants', () => {
-    expect(BOX_WIDTH).toBe(360);
-    expect(BOX_HEIGHT).toBe(200);
-    expect(BOX_BOTTOM).toBe(420);
+    expect(BOX_WIDTH).toBe(620);
+    expect(BOX_HEIGHT).toBe(620);
+    expect(BOX_BOTTOM).toBe(0);
     expect(ENTRY_RISE).toBe(28);
-    expect(characterBoxBounds()).toEqual({ top: 1300, bottom: 1500 });
+    expect(characterBoxBounds()).toEqual({ top: 1300, bottom: 1920 });
   });
 
   it('starts its entry exactly ENTRY_RISE below the resting place', () => {
@@ -84,29 +86,41 @@ describe('캐릭터 상자 기하', () => {
     expect(characterEntry(30, 30).translateY).toBe(0);
   });
 
-  /** 제자리에서는 세 줄 자막 밴드 위에 있어야 한다 */
-  it('rests clear of the three-line subtitle band', () => {
-    expect(characterBoxBounds().bottom).toBeLessThan(MEASURED.subtitleTop3Line);
-    expect(MEASURED.subtitleTop3Line - characterBoxBounds().bottom).toBeGreaterThanOrEqual(40);
+  /** 상자는 프레임 바닥에 붙는다 — 캐릭터가 바닥에 서 있어야 한다 */
+  it('anchors the box to the bottom of the frame', () => {
+    expect(characterBoxBounds().bottom).toBe(MEASURED.frameHeight);
   });
 
-  /** 등장 도중 가장 아래로 내려간 순간에도 자막을 건드리지 않아야 한다 */
-  it('stays clear of the subtitles while rising', () => {
-    expect(characterBoxBounds().bottom + ENTRY_RISE).toBeLessThan(MEASURED.subtitleTop3Line);
-  });
-
-  /** 항목이 한 줄로 읽히는 목록(실측 아래끝 1300)까지는 본문과 겹치지 않아야 한다 */
-  it('clears the readable-list body floor', () => {
+  /**
+   * 위끝은 여전히 "항목이 한 줄로 읽히는 목록"의 본문 아래끝(1300)을 지킨다. 흔한 내용에서는
+   * 캐릭터가 본문 뒤로 파고들지 않는다.
+   */
+  it('keeps its top edge at the readable-list body floor', () => {
     expect(characterBoxBounds().top).toBeGreaterThanOrEqual(MEASURED.bodyFloorReadableList);
   });
 
   /**
-   * 파이프라인 최대치(1411)는 **못 피한다**는 사실 자체를 붙든다. 이게 참인 한
-   * "본문 글자 아래에 그린다"는 층 선택은 취소하면 안 되는 결정이다.
+   * 상자가 자막 밴드 **안으로** 내려가는 건 실수가 아니라 결정이다. `SceneRouter`가 캐릭터를
+   * 본문 글자 아래에 넣고 자막이 zIndex 20으로 그 위에 있어서 겹쳐도 글자가 이기기 때문에
+   * 가능해진 것이다. 그 층 구조를 되돌리면 이 테스트가 결정을 다시 꺼내 보게 만든다.
    */
-  it('documents that no box size can clear the pipeline maximum', () => {
-    expect(MEASURED.bodyFloorPipelineMax).toBeGreaterThan(characterBoxBounds().top);
-    const roomAtMax = MEASURED.subtitleTop3Line - MEASURED.bodyFloorPipelineMax;
-    expect(roomAtMax).toBeLessThan(BOX_HEIGHT);
+  it('deliberately extends into the subtitle band, which only the layering allows', () => {
+    expect(characterBoxBounds().bottom).toBeGreaterThan(MEASURED.subtitleTop3Line);
+  });
+
+  /** 캐릭터 뒤에서도 자막 대비가 WCAG AA 큰 글자 기준 위에 있어야 한다 (실측 기반) */
+  it('keeps caption contrast above the WCAG AA large-text floor', () => {
+    expect(MEASURED.captionContrastOverCharacter)
+      .toBeGreaterThanOrEqual(MEASURED.wcagAaLargeText);
+  });
+
+  /**
+   * 본문 아래끝에는 **상한이 없다** — `splitItems`가 항목 개수만 5로 자르고 길이는 자르지
+   * 않는다. 1411은 실제로 본 표본일 뿐이다. 이게 참인 한 "본문 글자 아래에 그린다"는 층
+   * 선택은 취소하면 안 되는 결정이다.
+   */
+  it('documents that the body floor is unbounded, so overlap must stay safe', () => {
+    expect(MEASURED.bodyFloorLongItemsSample).toBeGreaterThan(MEASURED.bodyFloorReadableList);
+    expect(MEASURED.bodyFloorLongItemsSample).toBeGreaterThan(characterBoxBounds().top);
   });
 });

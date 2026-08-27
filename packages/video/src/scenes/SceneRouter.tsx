@@ -7,6 +7,7 @@ import { KeywordEmphasis } from './KeywordEmphasis';
 import { ListReveal } from './ListReveal';
 import { QuoteSlide } from './QuoteSlide';
 import { ConclusionSlide } from './ConclusionSlide';
+import { CharacterImage } from '../components/CharacterImage';
 
 export function findActiveScene(
   scenes: SceneDirective[],
@@ -17,7 +18,8 @@ export function findActiveScene(
 
 /**
  * 씬 타입 → 컴포넌트 분기. SceneRouter 밖으로 뺀 이유는 Remotion 훅 없이 테스트하기 위해서다.
- * `characterImageUrl` 처리는 계획 2b가 붙인다.
+ * `characterImageUrl`은 여기서 그리지 않는다 — 씬 컴포넌트 **위에** 얹는 오버레이라
+ * SceneRouter가 형제로 붙인다.
  */
 export function renderScene(scene: SceneDirective, palette: Palette): React.ReactNode {
   switch (scene.type) {
@@ -47,6 +49,28 @@ export function withReelBackground(
   return { ...scene, backgroundImageUrl: reelBackgroundImageUrl };
 }
 
+/**
+ * 캐릭터 등장 모션의 기준 시각. 활성 씬의 `startTime`이 아니라 **같은 캐릭터가 연속으로
+ * 이어지는 구간의 첫 씬**의 `startTime`이다.
+ *
+ * 씬마다 기준을 새로 잡으면, 릴 전체에 같은 캐릭터를 붙이는 보통의 경우(학생 한 명 =
+ * 캐릭터 한 장)에 씬이 바뀔 때마다 캐릭터가 사라졌다 다시 올라온다 — 3초마다 깜빡인다.
+ * 반대로 전역 프레임을 쓰면 캐릭터가 중간 씬에서 처음 나타날 때 모션 없이 튀어나오고,
+ * 씬마다 다른 캐릭터를 쓰는 경우에는 교체가 통째로 무시된다.
+ *
+ * 그림이 **바뀐 시점**을 기준으로 삼으면 두 경우가 다 맞는다: 같은 그림이 이어지면 처음
+ * 한 번만 올라오고, 그림이 바뀌면 그 씬에서 다시 올라온다.
+ */
+export function characterRunStart(scenes: SceneDirective[], activeIndex: number): number {
+  const active = scenes[activeIndex];
+  if (!active) return 0;
+  let first = activeIndex;
+  while (first > 0 && scenes[first - 1].characterImageUrl === active.characterImageUrl) {
+    first -= 1;
+  }
+  return scenes[first].startTime;
+}
+
 export const SceneRouter: React.FC<{
   scenes: SceneDirective[];
   palette: Palette;
@@ -61,6 +85,14 @@ export const SceneRouter: React.FC<{
   return (
     <AbsoluteFill>
       {renderScene(withReelBackground(active, backgroundImageUrl), palette)}
+      {/* 캐릭터는 씬 위, 자막 아래다. ReelVertical이 자막을 zIndex 20에 따로 얹으므로
+          혹시 겹치더라도 글자가 이긴다. */}
+      {active.characterImageUrl && (
+        <CharacterImage
+          src={active.characterImageUrl}
+          startTime={characterRunStart(scenes, scenes.indexOf(active))}
+        />
+      )}
     </AbsoluteFill>
   );
 };

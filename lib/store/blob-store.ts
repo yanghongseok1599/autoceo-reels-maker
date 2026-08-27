@@ -1,5 +1,5 @@
 import { get, list, put } from '@vercel/blob';
-import { assertSafeStoreKey, STORE_LIST_LIMIT, type Store } from './types';
+import { assertSafeStoreKey, STORE_LIST_PAGE_SIZE, type Store } from './types';
 
 /**
  * `put`의 `cacheControlMaxAge` 기본값은 **한 달**이다
@@ -42,19 +42,31 @@ export const blobStore: Store & { kind: 'blob' } = {
 
   async list(prefix: string): Promise<string[]> {
     assertSafeStoreKey(prefix);
+    const keys: string[] = [];
     try {
       /**
-       * `limit`을 직접 준다. 주지 않으면 1000이 기본값이라 지금은 같지만, SDK가 기본값을
-       * 바꾸면 파일 구현과 조용히 갈라진다(`index.d.ts:290`).
+       * 커서를 **끝까지** 따라간다. 한 페이지만 읽으면 그 뒤의 키는 존재하지 않는 것과
+       * 같아지고, 이 목록의 유일한 용도가 "인덱스에서 사라진 잡 찾기"이므로 그건 곧
+       * 조용히 복구를 포기하는 것이다. 잡은 매달 쌓이므로 시간이 지나면 반드시 온다.
+       *
+       * `limit`도 직접 준다. 주지 않으면 1000이 기본값이라 지금은 같지만, SDK가 기본값을
+       * 바꾸면 왕복 횟수가 말없이 달라진다(`index.d.ts:290`).
        */
-      const result = await list({ prefix, limit: STORE_LIST_LIMIT });
-      return result.blobs
-        .map((blob) => blob.pathname)
-        .filter((pathname) => pathname.endsWith('.json'))
-        .map((pathname) => pathname.slice(0, -'.json'.length));
+      let cursor: string | undefined;
+      do {
+        const page = await list({ prefix, limit: STORE_LIST_PAGE_SIZE, cursor });
+        for (const blob of page.blobs) {
+          if (blob.pathname.endsWith('.json')) {
+            keys.push(blob.pathname.slice(0, -'.json'.length));
+          }
+        }
+        // `hasMore`만 믿고 돌면 커서 없는 응답 하나에 무한 루프가 된다.
+        cursor = page.hasMore && page.cursor ? page.cursor : undefined;
+      } while (cursor);
     } catch {
-      // 읽기와 같은 태도다. 목록을 못 얻는 것은 "아무것도 없다"로 처리하고 호출자를 죽이지 않는다.
-      return [];
+      // 읽기와 같은 태도다. 목록을 못 얻는 것은 호출자를 죽이는 대신 거기까지 본 것으로 답한다.
+      return keys;
     }
+    return keys;
   },
 };

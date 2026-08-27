@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { assertSafeStoreKey, STORE_LIST_LIMIT, type Store } from './types';
+import { assertSafeStoreKey, type Store } from './types';
 
 /**
  * 호출 시점에 경로를 정한다. 모듈 로드 시점에 고정하면 테스트가 `STORE_DIR`로 임시 디렉터리를
@@ -40,9 +40,10 @@ export const fileStore: Store & { kind: 'file' } = {
       // 아직 아무것도 안 쓴 prefix는 오류가 아니라 "비어 있음"이다.
       return [];
     }
+    // 자르지 않는다. `readdir`는 이미 전부를 주고, 여기서 상한을 두면 배포 구현이
+    // 커서를 따라가며 지우는 바로 그 결함을 파일 쪽에 다시 만드는 꼴이다.
     return names
       .filter((name) => name.endsWith('.json'))
-      .slice(0, STORE_LIST_LIMIT)
       .map((name) => `${dir}/${name.slice(0, -'.json'.length)}`);
   },
 };

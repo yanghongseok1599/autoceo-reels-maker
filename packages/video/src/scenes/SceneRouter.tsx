@@ -122,7 +122,6 @@ export const SceneRouter: React.FC<{
             <CharacterImage
               src={active.characterImageUrl as string}
               startTime={characterRunStart(scenes, scenes.indexOf(active))}
-              palette={palette}
               sceneScale={sceneScale}
             />
           )

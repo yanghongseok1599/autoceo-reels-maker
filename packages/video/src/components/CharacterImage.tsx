@@ -1,6 +1,5 @@
 import React from 'react';
 import { AbsoluteFill, Img, interpolate, useCurrentFrame, useVideoConfig } from 'remotion';
-import type { Palette } from '../types';
 import { resolveAudioSrc } from '../utils/audioSrc';
 
 /**
@@ -52,20 +51,6 @@ export const BOX_BOTTOM = 0;
  */
 export const ENTRY_RISE = 28;
 
-/**
- * 자막 뒤에 까는 스크림(그라디언트 가림막)의 높이. 프레임 바닥에 붙으므로 y 1400~1920이다.
- *
- * 자막은 캐릭터가 뒤에 깔리면 대비가 17.31:1에서 3.27:1까지 떨어진다. 큰 글자 기준(3:1)은
- * 넘지만 **최소치**일 뿐이고, 이 릴은 폰으로 야외에서 보는 물건이라 자막이 정보의 본체다.
- * 그래서 위는 완전히 투명하고 아래로 갈수록 `palette.paper`가 짙어지는 세로 그라디언트를
- * 캐릭터 **위**, 자막 **아래**에 깐다. 자막 가독성을 뒤에 뭐가 있든 상관없게 떼어 놓는
- * 숏폼의 표준 처리다.
- *
- * 높이 520은 세 줄 자막(y 1550~1760)을 덮고도 위로 150px 남는 값이다 — 그 여유가 있어야
- * 위쪽 경계가 "막대"가 아니라 서서히 어두워지는 것으로 읽힌다. 캐릭터의 얼굴 높이
- * (세로 클립아트 기준 y 1330~1500)는 스크림이 옅은 구간이라 그대로 보인다.
- */
-export const SCRIM_HEIGHT = 520;
 
 /**
  * 위 상수들을 고른 근거가 된 **실측값**. 테스트가 크기와 근거를 함께 붙들도록 내보낸다 —
@@ -83,22 +68,6 @@ export const MEASURED = {
    */
   bodyFloorLongItemsSample: 1411,
   frameHeight: 1920,
-  /**
-   * 캐릭터 위에 얹힌 자막의 실측 명도 대비(WCAG). 캐릭터가 없으면 17.3:1이고, 뒤에 캐릭터가
-   * 깔리면 클립아트에 따라 3.27:1(가장 나쁜 경우, 본문 최악 케이스 + 세로 클립아트)
-   * ~5.45:1로 떨어진다. `Subtitles`의 textShadow가 만드는 어두운 헤일로가 이 차이를 메운다 —
-   * 프레임을 원본 해상도로 잘라 직접 읽어 확인했다. 다만 여유가 얇다.
-   */
-  captionContrastOverCharacter: 3.27,
-  /**
-   * 스크림을 깐 뒤 같은 프레임들에서 다시 잰 최악 대비. 위 3.27:1을 대체하는 값이다 —
-   * 3.27은 "스크림이 없으면 이렇게 된다"는 기록으로 남겨 둔다.
-   */
-  captionContrastWithScrim: 11.39,
-  /** WCAG AA 큰 글자(18.66px 이상 굵은 글씨) 기준. 자막은 46px/800이라 여기에 해당한다 */
-  wcagAaLargeText: 3,
-  /** WCAG AA 본문 글자 기준. 큰 글자인 자막에 이걸 목표로 삼아 여유를 둔다 */
-  wcagAaNormalText: 4.5,
 } as const;
 
 /**
@@ -130,6 +99,9 @@ export function characterEntry(sceneFrame: number, fps: number) {
  * 씬 배경과 본문 글자 **사이**에 들어가는 캐릭터. 자리는 본문 아래·자막 위지만, 본문이
  * 길어져 내려오면 글자가 캐릭터를 덮는다 — 그 층 선택의 이유는 `SceneRouter`에 적었다.
  *
+ * 자막 뒤 가림막은 여기 없다. 캐릭터가 있든 없든 릴 전체에 같은 처리가 필요해서
+ * `ReelVertical`이 `CaptionScrim`을 따로 얹는다.
+ *
  * `src`는 public 루트 기준 상대 경로다. `resolveAudioSrc`는 이름과 달리 오디오 전용이 아니라
  * "원격 URL이면 그대로, 상대 경로면 `staticFile()`" 규칙이라 이미지에도 그대로 필요하다.
  * 이름만 오디오일 뿐 규칙은 미디어 일반이다 — 같은 규칙을 여기 다시 적으면 두 벌이 된다.
@@ -142,10 +114,9 @@ export function characterEntry(sceneFrame: number, fps: number) {
 export const CharacterImage: React.FC<{
   src: string;
   startTime: number;
-  palette: Palette;
   /** 이 캐릭터가 얹힌 씬이 루트에 건 scale 배율 */
   sceneScale: number;
-}> = ({ src, startTime, palette, sceneScale }) => {
+}> = ({ src, startTime, sceneScale }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const sceneFrame = frame - Math.round(startTime * fps);
@@ -187,19 +158,6 @@ export const CharacterImage: React.FC<{
         }}
       />
 
-      {/*
-        자막 스크림. 캐릭터 **위**(이 요소가 Img 뒤에 온다), 본문 글자와 자막 **아래**에 앉는다.
-        캐릭터와 같은 opacity로 함께 나타나므로 캐릭터가 없는 동안 어두운 띠만 남는 일은 없다.
-      */}
-      <AbsoluteFill
-        style={{
-          top: undefined,
-          height: SCRIM_HEIGHT,
-          bottom: 0,
-          opacity,
-          background: `linear-gradient(180deg, transparent 0%, ${palette.paper}40 22%, ${palette.paper}b3 46%, ${palette.paper}e0 72%, ${palette.paper}eb 100%)`,
-        }}
-      />
     </AbsoluteFill>
   );
 };

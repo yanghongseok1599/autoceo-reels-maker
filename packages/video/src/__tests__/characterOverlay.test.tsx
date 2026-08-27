@@ -5,9 +5,10 @@ import { ReelVertical } from '../ReelVertical';
 import type { ReelProps, SceneDirective } from '../types';
 import { FALLBACK_PALETTE } from '../types';
 import {
-  BOX_BOTTOM, BOX_HEIGHT, BOX_WIDTH, ENTRY_RISE, MEASURED, SCRIM_HEIGHT,
+  BOX_BOTTOM, BOX_HEIGHT, BOX_WIDTH, ENTRY_RISE, MEASURED,
   characterBoxBounds, characterEntry, undoSceneScale,
 } from '../components/CharacterImage';
+import { SCRIM_HEIGHT, SCRIM_MEASURED } from '../components/CaptionScrim';
 
 // reelBackground.test.tsx와 같은 이유의 모킹 — Remotion 훅과 <Img>는 컴포지션 밖에서 던진다
 vi.mock('remotion', async (importOriginal) => ({
@@ -54,6 +55,22 @@ describe('SceneRouter — 캐릭터 오버레이', () => {
   });
 
   /**
+   * 자막 가림막은 캐릭터와 무관하게 **언제나** 나온다. Task 5의 캐릭터 배정은 키워드
+   * 매칭이라 여섯 씬 중 두세 씬에만 캐릭터가 붙는 게 보통인데, 조건부로 그리면 자막 뒤
+   * 어둠이 씬마다 들락거린다. 두 경우의 가림막 마크업이 **글자 그대로 같아야** 한다.
+   */
+  it('draws the same caption scrim with and without a character', () => {
+    const scrim = /<div style="[^"]*linear-gradient\(180deg, transparent 0%[^"]*"><\/div>/;
+    const withChar = markup({ scenes: [{ ...scene, characterImageUrl: 'characters/s1.png' }] });
+    const without = markup({});
+    const a = scrim.exec(withChar);
+    const b = scrim.exec(without);
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a?.[0]).toBe(b?.[0]);
+  });
+
+  /**
    * 렌더된 스타일이 상수를 **그대로** 쓰는지 본다. 리터럴로 적는 이유가 있다 — 기대값을
    * 상수에서 만들면 상수를 바꿔도 양쪽이 같이 움직여 테스트가 안 깨진다.
    */
@@ -65,9 +82,6 @@ describe('SceneRouter — 캐릭터 오버레이', () => {
     // contain이 남기는 여백을 아래로 몰지 않으면 정사각·가로 원본이 바닥에서 뜬다
     expect(html).toContain('object-position:bottom');
     expect(html).toContain('padding-bottom:0');
-    // 자막 스크림 — 캐릭터 위, 자막 아래
-    expect(html).toContain('height:520px');
-    expect(html).toContain('linear-gradient(180deg, transparent 0%');
   });
 });
 
@@ -114,19 +128,31 @@ describe('캐릭터 상자 기하', () => {
   /** 캐릭터 뒤에서도 자막 대비가 WCAG AA 큰 글자 기준 위에 있어야 한다 (실측 기반) */
   it('pins the scrim height that covers a three-line caption', () => {
     expect(SCRIM_HEIGHT).toBe(520);
+    expect(markup({})).toContain('height:520px');
     // 스크림 윗변은 세 줄 자막(y 1550)보다 위에서 시작해야 위 경계가 부드럽게 읽힌다
     expect(MEASURED.frameHeight - SCRIM_HEIGHT).toBeLessThan(MEASURED.subtitleTop3Line);
   });
 
   /**
-   * 스크림 없이는 3.27:1 — 큰 글자 기준(3:1)은 넘지만 9%밖에 안 남는다. 스크림을 깔고 다시
-   * 재서 본문 글자 기준(4.5:1)보다 넉넉히 위에 오도록 했다. 두 값을 다 붙들어, 스크림을
-   * 걷어내면 무엇이 사라지는지 코드에서 보이게 한다.
+   * 최악(배경 이미지 + 캐릭터)은 스크림 없이 2.86:1로 **큰 글자 기준마저** 못 넘는다.
+   * 스크림을 깔면 10.13:1로, 본문 글자 기준의 두 배를 넘는다.
    */
-  it('lifts caption contrast well past the normal-text floor with the scrim', () => {
-    expect(MEASURED.captionContrastOverCharacter).toBeLessThan(MEASURED.wcagAaNormalText);
-    expect(MEASURED.captionContrastWithScrim)
-      .toBeGreaterThan(MEASURED.wcagAaNormalText * 2);
+  it('lifts the worst caption contrast from below the floor to well past it', () => {
+    expect(SCRIM_MEASURED.worstWithoutScrim)
+      .toBeLessThan(SCRIM_MEASURED.wcagAaLargeText);
+    expect(SCRIM_MEASURED.worstWithScrim)
+      .toBeGreaterThan(SCRIM_MEASURED.wcagAaNormalText * 2);
+  });
+
+  /**
+   * 캐릭터가 없는 씬에서도 값을 한다 — 이게 스크림을 조건부로 되돌리지 못하게 막는 근거다.
+   * `pickBackground`가 모든 씬에 사진을 깔기 때문에 이쪽이 오히려 기본 상황이다.
+   */
+  it('materially improves the character-less background-image case too', () => {
+    expect(SCRIM_MEASURED.backgroundOnlyWithoutScrim)
+      .toBeLessThan(SCRIM_MEASURED.wcagAaNormalText * 1.2);
+    expect(SCRIM_MEASURED.backgroundOnlyWithScrim)
+      .toBeGreaterThan(SCRIM_MEASURED.backgroundOnlyWithoutScrim * 2);
   });
 
   /**

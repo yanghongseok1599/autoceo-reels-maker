@@ -9,26 +9,42 @@
 
 ## 배포 전 확인
 
-### 배포 직후 `GET /api/health`를 한 번 두드릴 것
+### 배포 절차: 배포 → `GET /api/health`를 워커 토큰으로 두드린다 → `ok:true`면 저장소가 진짜다
 
 앱에는 워커와 달리 기동 시 환경 검사가 없었다. `SESSION_SECRET` 없이 배포하면
 `signSession`이 **요청 시점에** 던져서, 운영자가 보는 것은 로그인 화면의 500 하나뿐이고
 어느 변수가 빠졌는지는 알 방법이 없었다. 그래서 진단용 라우트를 뒀다.
 
 ```bash
-# 워커 토큰이 있어야 이름을 준다. 토큰 없이 부르면 { "ok": false }만 나온다.
 curl -s -H "x-worker-token: $WORKER_TOKEN" https://<앱주소>/api/health
-# {"ok":false,"missing":["SESSION_SECRET"],"recommended":["BLOB_READ_WRITE_TOKEN"]}
+# 정상:   {"ok":true,"missing":[],"recommended":[]}
+# 미완성: {"ok":false,"missing":["BLOB_READ_WRITE_TOKEN"],"recommended":[]}
 ```
 
+**`ok:true`는 저장소가 진짜라는 뜻까지 포함한다.** `BLOB_READ_WRITE_TOKEN`은 배포에서
+**필수**다 — 없으면 `lib/store/index.ts`가 파일 저장소로 떨어지는데, Vercel 파일시스템은
+요청 사이에 남지 않으므로 그건 대체재가 아니라 수강생의 목소리·캐릭터·프로젝트가
+사라진다는 뜻이다. 그런 배포에 초록불을 켜 주면 운영자는 그때부터 다른 데를 본다.
+헬스가 없는 것보다 나쁘다. 그래서 거기서는 `ok:false`가 나간다.
+
+로컬은 다르다. 토큰이 없어도 파일 저장소가 **진짜 디스크**를 쓰므로 정상이고,
+`ok:true` + `recommended:["BLOB_READ_WRITE_TOKEN"]`이 나간다. 판정은 `VERCEL_ENV`로
+가른다(`production`·`preview`는 배포, `development`는 `vercel dev`라 로컬).
+
+| | 토큰 있음 | 토큰 없음 |
+|---|---|---|
+| **Vercel 배포** | `200 ok:true` | **`503 ok:false`**, `missing`에 이름 |
+| **로컬 / `vercel dev`** | `200 ok:true` | `200 ok:true`, `recommended`에 이름 |
+
+나머지 규칙:
+
 - **인증 없는 호출에는 이름을 주지 않는다.** 빠진 변수 목록은 배포의 약한 자리를 그린
-  지도다. 인증은 `POST /api/jobs/next`가 쓰는 그 헤더 하나를 그대로 쓴다.
+  지도다. `{"ok":…}` 하나만 나간다. 인증은 `POST /api/jobs/next`가 쓰는 그 헤더를 그대로 쓴다.
 - **값은 어느 쪽에도 실리지 않는다.** 이름뿐이다.
-- `missing`이 비어야 배포가 성립한다. `recommended`는 없어도 앱이 돌지만
-  (`BLOB_READ_WRITE_TOKEN`이 없으면 파일 저장소로 떨어진다) Vercel에서는 요청 사이에
-  데이터가 남지 않으므로 **배포에서는 반드시 채울 것.**
-- `WORKER_TOKEN` 자체가 비어 있으면 아무도 이름 목록을 못 본다(`assertWorker`가 무조건
-  false다). 그때는 배포 콘솔에서 직접 확인한다 — 편의를 위해 경계를 열지 않았다.
+- `WORKER_TOKEN`이 비어 있으면 아무도 이름 목록을 못 본다(`assertWorker`가 무조건 false다).
+  그런데 그것 자체가 필수라 인증 없는 응답이 이미 `ok:false`다 — 토큰부터 확인하면 된다.
+- **한계**: 프로젝트 설정에서 시스템 환경변수를 통째로 끄면 `VERCEL`·`VERCEL_ENV`가 오지
+  않아 배포를 감지할 수 없고, 그때 이 검사는 예전 동작(권장)으로 내려앉는다. 끄지 말 것.
 
 이 라우트는 진단이다. `signSession`/`readSession`의 fail-closed 동작을 대신하지 않는다.
 

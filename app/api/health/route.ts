@@ -18,15 +18,69 @@ export const dynamic = 'force-dynamic';
  *    `voicebox/clone`·`generate`·`preview/start`가 500이 되고, 그건 수강생이 돈을 낸
  *    바로 그 기능(내 목소리)이다.
  *
- * `BLOB_READ_WRITE_TOKEN`은 **필수가 아니다.** 없으면 `lib/store/index.ts`가 파일 저장소를
- * 고르고 앱은 그대로 동작한다 — 그게 로컬 개발 구성이다. 다만 Vercel의 파일시스템은
- * 요청 사이에 남지 않으므로 배포에서는 데이터가 조용히 사라진다. "동작은 하는데 배포에는
- * 틀린" 값이라 `recommended`로 따로 보고하고, 이 값 때문에 헬스가 실패하지는 않는다.
+ * `BLOB_READ_WRITE_TOKEN`은 **어디서 도느냐에 따라 다르다** — 아래 `DEPLOY_REQUIRED_APP_ENV`.
  */
 export const REQUIRED_APP_ENV = ['SESSION_SECRET', 'WORKER_TOKEN', 'FISH_API_KEY'] as const;
 
-/** 없어도 앱은 돈다. 배포에서만 문제가 되므로 `missing`과 섞지 않는다. */
-export const RECOMMENDED_APP_ENV = ['BLOB_READ_WRITE_TOKEN'] as const;
+/**
+ * **배포에서만** 필수다.
+ *
+ * 로컬에서는 없어도 된다. `lib/store/index.ts`가 파일 저장소를 고르고, 그 파일은 개발자
+ * 기계의 진짜 디스크에 남는다 — 대체재가 제대로 동작하는 구성이다.
+ *
+ * Vercel 배포에서는 같은 말이 성립하지 않는다. 그쪽 파일시스템은 요청 사이에 남지 않으므로
+ * 파일 저장소는 대체재가 아니라 **데이터 유실**이다. 수강생의 목소리·캐릭터·프로젝트가
+ * 다음 요청에 사라진다.
+ *
+ * 그래서 이 값 하나로 헬스를 실패시키지 않던 예전 판단을 뒤집는다. 헬스가 못 해야 할 일이
+ * 정확히 그것이다 — **전부 잃을 배포에 초록불을 켜 주는 것.** `ok: true`를 받은 운영자는
+ * 그때부터 다른 곳을 본다. 그건 헬스가 없는 것보다 나쁘다.
+ */
+export const DEPLOY_REQUIRED_APP_ENV = ['BLOB_READ_WRITE_TOKEN'] as const;
+
+/**
+ * Vercel의 서버리스 파일시스템 위에서 도는가.
+ *
+ * 값은 확인해서 골랐다(`node_modules/next/dist` 안에서 Next 자신이 쓰는 것):
+ *  · `VERCEL_ENV`는 `production` · `preview` · `development` 중 하나다.
+ *    앞의 둘이 실제 배포이고, 그 파일시스템이 요청 사이에 남지 않는 바로 그것이다.
+ *  · `development`는 `vercel dev` — **개발자 기계**다. 디스크가 진짜라 파일 저장소가
+ *    멀쩡히 동작한다. 여기서 실패시키면 로컬이 늘 빨개지고, 빨간 게 기본이 되면
+ *    아무도 안 본다.
+ *  · `VERCEL`은 배포에서 `"1"`이지만 **프로젝트 설정에서 시스템 환경변수를 끄면 사라진다**
+ *    (Next 주석: `process.env.VERCEL is set to "1" when System Environment Variables are
+ *    exposed`). 그래서 이것만 믿지 않고 `VERCEL_ENV`를 먼저 본다.
+ *
+ * `VERCEL_ENV`가 없는데 `VERCEL`만 있으면 **배포로 본다.** 여기서 틀리는 방향은
+ * "괜히 빨개진다"여야지 "깨진 배포에 초록불"이면 안 된다.
+ *
+ * 시스템 환경변수를 통째로 끈 배포는 어느 신호도 오지 않아 감지할 수 없다. 그때 이 검사는
+ * 예전 동작(권장)으로 조용히 내려앉는다 — 그 한계는 `docs/OPERATIONS.md`에 적어 뒀다.
+ */
+export function isVercelDeployment(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const target = env.VERCEL_ENV?.trim();
+  if (target === 'development') return false;
+  if (target === 'production' || target === 'preview') return true;
+  return Boolean(env.VERCEL?.trim());
+}
+
+/** 지금 이 환경에서 없으면 안 되는 것들. 배포에서는 저장소 토큰이 여기 합류한다. */
+export function requiredAppEnv(env: Record<string, string | undefined> = process.env): string[] {
+  return isVercelDeployment(env)
+    ? [...REQUIRED_APP_ENV, ...DEPLOY_REQUIRED_APP_ENV]
+    : [...REQUIRED_APP_ENV];
+}
+
+/**
+ * 없어도 되지만 있는 편이 나은 것들. 배포에서는 저장소 토큰이 **필수로 올라갔으므로**
+ * 여기서 빠진다 — 같은 이름을 두 목록에 싣지 않는다. `recommended`에 있다는 것은
+ * "없어도 괜찮다"는 뜻이어야 하고, 그 뜻이 흐려지면 목록 자체가 쓸모없어진다.
+ */
+export function recommendedAppEnv(env: Record<string, string | undefined> = process.env): string[] {
+  return isVercelDeployment(env) ? [] : [...DEPLOY_REQUIRED_APP_ENV];
+}
 
 function absent(
   names: readonly string[],
@@ -39,13 +93,13 @@ function absent(
 export function missingAppEnv(
   env: Record<string, string | undefined> = process.env,
 ): string[] {
-  return absent(REQUIRED_APP_ENV, env);
+  return absent(requiredAppEnv(env), env);
 }
 
 export function missingRecommendedAppEnv(
   env: Record<string, string | undefined> = process.env,
 ): string[] {
-  return absent(RECOMMENDED_APP_ENV, env);
+  return absent(recommendedAppEnv(env), env);
 }
 
 /**
@@ -61,6 +115,9 @@ export function missingRecommendedAppEnv(
  *
  * 값은 **어느 쪽에도** 싣지 않는다. 이름만으로 운영자는 무엇을 채울지 알 수 있고,
  * 값이 새면 지금 막으려는 문제보다 나쁜 사고가 된다.
+ *
+ * `ok: true`는 **저장소가 진짜라는 뜻까지 포함한다.** 배포에서 `BLOB_READ_WRITE_TOKEN`이
+ * 없으면 여기서 초록불이 켜지지 않는다(`DEPLOY_REQUIRED_APP_ENV` 주석).
  *
  * 저장소는 건드리지 않는다. 헬스가 수강생에 대해 알아내는 통로가 되면 안 된다.
  *

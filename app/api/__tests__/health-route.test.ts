@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { GET as healthRoute, REQUIRED_APP_ENV, RECOMMENDED_APP_ENV } from '../health/route';
+import {
+  GET as healthRoute,
+  isVercelDeployment,
+  REQUIRED_APP_ENV,
+  DEPLOY_REQUIRED_APP_ENV,
+} from '../health/route';
 
 /**
  * 이 라우트의 값어치는 전부 **누구에게 어떤 이름을 보여주는가**에 있다. 그래서 검사도
@@ -21,7 +26,16 @@ beforeEach(() => {
   process.env.WORKER_TOKEN = WORKER_TOKEN;
   process.env.FISH_API_KEY = FISH_VALUE;
   delete process.env.BLOB_READ_WRITE_TOKEN;
+  // 기본은 **배포가 아닌 곳**이다. 실제 로컬 환경에도 이 둘은 없다(확인함).
+  delete process.env.VERCEL;
+  delete process.env.VERCEL_ENV;
 });
+
+/** Vercel 배포 환경을 흉내 낸다. 시스템 환경변수가 켜진 배포가 실제로 보내는 두 값이다. */
+function onVercel(target: 'production' | 'preview' = 'production') {
+  process.env.VERCEL = '1';
+  process.env.VERCEL_ENV = target;
+}
 
 const call = (token?: string) =>
   healthRoute(
@@ -57,7 +71,7 @@ describe('GET /api/health — 인증 없는 호출은 이름을 하나도 알려
     delete process.env.SESSION_SECRET;
     delete process.env.FISH_API_KEY;
     const { text } = await read();
-    for (const name of [...REQUIRED_APP_ENV, ...RECOMMENDED_APP_ENV]) {
+    for (const name of [...REQUIRED_APP_ENV, ...DEPLOY_REQUIRED_APP_ENV]) {
       expect(text).not.toContain(name);
     }
     expect(text).not.toContain('missing');
@@ -155,41 +169,135 @@ describe('GET /api/health — 워커 토큰을 가진 쪽은 빠진 이름을 �
     delete process.env.SESSION_SECRET;
     const { body } = await read(WORKER_TOKEN);
     expect(Object.keys(body).sort()).toEqual(['missing', 'ok', 'recommended']);
-    const known: readonly string[] = [...REQUIRED_APP_ENV, ...RECOMMENDED_APP_ENV];
+    const known: readonly string[] = [...REQUIRED_APP_ENV, ...DEPLOY_REQUIRED_APP_ENV];
     for (const name of [...body.missing, ...body.recommended]) {
       expect(known).toContain(name);
     }
   });
 });
 
-describe('GET /api/health — BLOB_READ_WRITE_TOKEN은 권장이지 필수가 아니다', () => {
-  /** 없어도 앱은 돈다(파일 저장소). 이걸로 헬스를 실패시키면 로컬 개발이 늘 빨개진다. */
-  it('없어도 ok는 true이고 상태는 200이다', async () => {
+/**
+ * `ok: true`가 거짓말을 할 수 있으면 헬스는 **없는 것보다 나쁘다.** 초록불을 받은 운영자는
+ * 그때부터 다른 데를 보기 때문이다. 저장소 토큰이 빠진 Vercel 배포는 수강생의 목소리·
+ * 캐릭터·프로젝트를 전부 잃는데, 예전에는 거기에 `ok: true`가 나갔다.
+ *
+ * 네 모서리를 전부 못 박는다: (배포 여부) × (토큰 유무).
+ */
+describe('GET /api/health — BLOB_READ_WRITE_TOKEN은 배포에서만 필수다', () => {
+  it('① 배포 + 토큰 있음 → ok', async () => {
+    onVercel();
+    process.env.BLOB_READ_WRITE_TOKEN = BLOB_VALUE;
+    const { status, body } = await read(WORKER_TOKEN);
+    expect(status).toBe(200);
+    expect(body).toEqual({ ok: true, missing: [], recommended: [] });
+  });
+
+  /** 이 모서리가 이번 수정의 전부다. 예전에는 여기서 200 + ok:true가 나갔다. */
+  it('② 배포 + 토큰 없음 → **not ok**, 그리고 recommended가 아니라 missing에 뜬다', async () => {
+    onVercel();
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    const { status, body } = await read(WORKER_TOKEN);
+    expect(status).toBe(503);
+    expect(body.ok).toBe(false);
+    expect(body.missing).toContain('BLOB_READ_WRITE_TOKEN');
+    // 같은 이름을 두 목록에 싣지 않는다 — recommended는 "없어도 괜찮다"는 뜻이어야 한다.
+    expect(body.recommended).not.toContain('BLOB_READ_WRITE_TOKEN');
+    expect(body.recommended).toEqual([]);
+  });
+
+  it('② 배포 + 토큰 없음 — 인증 없는 쪽도 ok:false를 받는다(이름은 없이)', async () => {
+    onVercel();
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    const { status, body, text } = await read();
+    expect(status).toBe(503);
+    expect(body).toEqual({ ok: false });
+    expect(text).not.toContain('BLOB_READ_WRITE_TOKEN');
+  });
+
+  it('③ 배포 아님 + 토큰 있음 → ok, 권장 목록도 빈다', async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = BLOB_VALUE;
+    const { status, body } = await read(WORKER_TOKEN);
+    expect(status).toBe(200);
+    expect(body).toEqual({ ok: true, missing: [], recommended: [] });
+  });
+
+  /** 로컬은 파일 저장소가 진짜 디스크를 쓴다 — 대체재가 제대로 동작하는 구성이다. */
+  it('④ 배포 아님 + 토큰 없음 → ok, 다만 recommended로 알려준다', async () => {
     delete process.env.BLOB_READ_WRITE_TOKEN;
     const { status, body } = await read(WORKER_TOKEN);
     expect(status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.missing).toEqual([]);
-  });
-
-  /** 그래도 배포에서는 데이터가 사라진다. missing과 **다른 자리**로 말해 준다. */
-  it('없으면 recommended에 이름이 뜬다', async () => {
-    delete process.env.BLOB_READ_WRITE_TOKEN;
-    const { body } = await read(WORKER_TOKEN);
     expect(body.recommended).toEqual(['BLOB_READ_WRITE_TOKEN']);
-    expect(body.missing).not.toContain('BLOB_READ_WRITE_TOKEN');
   });
 
-  it('있으면 recommended가 빈다', async () => {
-    process.env.BLOB_READ_WRITE_TOKEN = BLOB_VALUE;
-    expect((await read(WORKER_TOKEN)).body.recommended).toEqual([]);
-  });
-
-  it('공백만 들어 있으면 없는 것으로 센다', async () => {
-    process.env.BLOB_READ_WRITE_TOKEN = '  ';
+  it('배포에서도 공백만 든 토큰은 없는 것으로 센다', async () => {
+    onVercel();
+    process.env.BLOB_READ_WRITE_TOKEN = '   ';
     const { status, body } = await read(WORKER_TOKEN);
-    expect(status).toBe(200);
-    expect(body.recommended).toEqual(['BLOB_READ_WRITE_TOKEN']);
+    expect(status).toBe(503);
+    expect(body.missing).toContain('BLOB_READ_WRITE_TOKEN');
+  });
+
+  /** preview 배포도 같은 서버리스 파일시스템이다. production만 보면 절반이 뚫린다. */
+  it('preview 배포도 production과 똑같이 필수로 본다', async () => {
+    onVercel('preview');
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    const { status, body } = await read(WORKER_TOKEN);
+    expect(status).toBe(503);
+    expect(body.missing).toContain('BLOB_READ_WRITE_TOKEN');
+  });
+});
+
+/**
+ * 플랫폼 판정이 **실제로 판정 노릇을 하는지**. 항상 참이면 로컬이 늘 빨개지고,
+ * 항상 거짓이면 이번 수정이 통째로 없는 것과 같다.
+ */
+describe('isVercelDeployment — 어느 신호를 믿는가', () => {
+  it('production과 preview는 배포다', () => {
+    expect(isVercelDeployment({ VERCEL_ENV: 'production' })).toBe(true);
+    expect(isVercelDeployment({ VERCEL_ENV: 'preview' })).toBe(true);
+  });
+
+  /** `vercel dev`는 개발자 기계다. 디스크가 진짜라 파일 저장소가 멀쩡히 동작한다. */
+  it('vercel dev(VERCEL=1 + VERCEL_ENV=development)는 배포가 아니다', () => {
+    expect(isVercelDeployment({ VERCEL: '1', VERCEL_ENV: 'development' })).toBe(false);
+  });
+
+  it('아무 신호도 없으면 배포가 아니다', () => {
+    expect(isVercelDeployment({})).toBe(false);
+    expect(isVercelDeployment({ VERCEL: '', VERCEL_ENV: '' })).toBe(false);
+  });
+
+  /** 공백만 든 값은 없는 것과 같다 — 다른 필수 검사와 같은 기준을 쓴다. */
+  it('공백만 든 신호는 신호가 아니다', () => {
+    expect(isVercelDeployment({ VERCEL: '   ' })).toBe(false);
+    expect(isVercelDeployment({ VERCEL_ENV: '  ' })).toBe(false);
+  });
+
+  it('앞뒤 공백이 붙은 VERCEL_ENV도 알아본다', () => {
+    expect(isVercelDeployment({ VERCEL_ENV: ' production ' })).toBe(true);
+    expect(isVercelDeployment({ VERCEL: '1', VERCEL_ENV: ' development ' })).toBe(false);
+  });
+
+  /**
+   * 시스템 환경변수를 일부만 노출한 배포. 모르면 **배포로 본다** — 틀리는 방향은
+   * "괜히 빨개진다"여야지 "깨진 배포에 초록불"이면 안 된다.
+   */
+  it('VERCEL만 있고 VERCEL_ENV가 없으면 배포로 본다(fail-closed)', () => {
+    expect(isVercelDeployment({ VERCEL: '1' })).toBe(true);
+  });
+
+  /** `VERCEL_ENV`를 먼저 본다 — `VERCEL`이 붙어 있어도 development면 배포가 아니다. */
+  it('VERCEL_ENV가 VERCEL보다 우선한다', () => {
+    expect(isVercelDeployment({ VERCEL: '1', VERCEL_ENV: 'development' })).toBe(false);
+    expect(isVercelDeployment({ VERCEL_ENV: 'production' })).toBe(true);
+  });
+
+  it('실제 process.env를 기본값으로 읽는다', () => {
+    expect(isVercelDeployment()).toBe(false);
+    onVercel();
+    expect(isVercelDeployment()).toBe(true);
   });
 });
 
@@ -202,9 +310,9 @@ describe('필수 목록 자체', () => {
     expect([...REQUIRED_APP_ENV]).toEqual(['SESSION_SECRET', 'WORKER_TOKEN', 'FISH_API_KEY']);
   });
 
-  it('BLOB_READ_WRITE_TOKEN은 필수가 아니라 권장 쪽에 있다', () => {
+  it('BLOB_READ_WRITE_TOKEN은 무조건 필수가 아니라 배포 조건부다', () => {
     expect([...REQUIRED_APP_ENV]).not.toContain('BLOB_READ_WRITE_TOKEN');
-    expect([...RECOMMENDED_APP_ENV]).toEqual(['BLOB_READ_WRITE_TOKEN']);
+    expect([...DEPLOY_REQUIRED_APP_ENV]).toEqual(['BLOB_READ_WRITE_TOKEN']);
   });
 
   /** 워커 전용 변수는 앱 필수가 아니다 — 앱은 WHISPER 없이도 멀쩡히 돈다. */

@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useState } from "react";
+import { renderProgressView } from "@/lib/render-wait-state";
 import {
   buildHiggsfieldAvatarPrompt,
   buildHiggsfieldExercisePrompt,
@@ -122,14 +123,6 @@ function statusLabel(status: JobStatus) {
   }[status];
 }
 
-function progressStageLabel(value: number, status: JobStatus) {
-  if (status === "completed") return "완성";
-  if (value < 25) return "음성 합성 중";
-  if (value < 55) return "아바타 렌더링 중";
-  if (value < 85) return "자막·타이밍 합성 중";
-  return "마무리 중";
-}
-
 function previewStageLabel(status: string) {
   const value = (status || "").toLowerCase();
   if (value === "loading_model") return "모델 로딩 중";
@@ -155,6 +148,17 @@ export default function Home() {
   const [poseGuidePrompt, setPoseGuidePrompt] = useState("덤벨컬 준비 자세, 수축 자세, 팔꿈치 고정 주의사항이 보이는 동작 가이드 시트");
   const [jobId, setJobId] = useState("");
   const [videoStatus, setVideoStatus] = useState<JobStatus>("idle");
+  /**
+   * 서버가 말한 잡 상태 그대로. `videoStatus`는 `queued`·`claimed`·`rendering`을 전부
+   * `processing` 하나로 뭉개서, "아무도 안 집어갔다"와 "지금 렌더 중"을 구분할 수 없다.
+   */
+  const [serverJobStatus, setServerJobStatus] = useState("");
+  /**
+   * 첫 응답을 받기 전에는 **살아 있다고 본다.** 모르는 상태에서 "렌더 서버가 응답하지
+   * 않습니다"를 띄우면, 방금 고친 거짓말을 방향만 바꿔 다시 하는 것이다.
+   * 서버가 `workerAlive`를 아예 보내지 않는 경우(옛 배포)도 같은 이유로 살아 있는 쪽이다.
+   */
+  const [workerAlive, setWorkerAlive] = useState(true);
   const [progress, setProgress] = useState(0);
   const [displayProgress, setDisplayProgress] = useState(0);
   const [resultUrl, setResultUrl] = useState("");
@@ -212,7 +216,12 @@ export default function Home() {
         ? 0
         : 1;
   const roundedProgress = Math.round(displayProgress);
-  const stageLabel = progressStageLabel(displayProgress, videoStatus);
+  const { stage: stageLabel, note: stageNote, alert: stageAlert } = renderProgressView({
+    jobStatus: serverJobStatus,
+    uiStatus: videoStatus,
+    progress: displayProgress,
+    workerAlive,
+  });
   const readyItems = isExerciseMode
     ? [
         { label: "동작 가이드", done: Boolean(poseGuideName) },
@@ -689,12 +698,19 @@ export default function Home() {
     }
 
     setVideoStatus("processing");
+    setServerJobStatus("");
+    setWorkerAlive(true);
     setLearningRecordId("");
     setLearningFeedback("");
     setResultUrl("");
     setResultAudioUrl("");
     setDisplayProgress(0);
-    setProgress(12);
+    /**
+     * 예전에는 여기서 12를 넣었다. 서버에 요청도 보내기 전에 12%가 찬 것이고, 큐에 들어간
+     * 잡의 진짜 진행률은 0이라 첫 폴링에서 도로 0으로 떨어졌다. 클릭이 먹었다는 신호는
+     * 진행 패널이 뜨는 것으로 충분하다 — 숫자까지 앞서 나갈 이유가 없다.
+     */
+    setProgress(0);
 
     const response = await fetch("/api/projects", {
       method: "POST",
@@ -745,6 +761,10 @@ export default function Home() {
       }
 
       setProgress(data.progress);
+      setServerJobStatus(data.status ?? "");
+      // 필드가 없으면 살아 있는 쪽으로 읽는다. `null`은 "큐에 없어서 묻지 않았다"이고,
+      // 그때 화면은 이 값을 쓰지 않는다.
+      setWorkerAlive(data.workerAlive !== false);
 
       if (data.status === "completed") {
         window.clearInterval(timer);
@@ -1191,6 +1211,9 @@ export default function Home() {
               <div className="progressTrack">
                 <div className="progressFill" style={{ width: `${roundedProgress}%` }} />
               </div>
+              {stageNote && (
+                <p className={stageAlert ? "progressNote alert" : "progressNote"}>{stageNote}</p>
+              )}
             </div>
           )}
 

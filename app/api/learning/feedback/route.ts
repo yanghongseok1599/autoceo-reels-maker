@@ -5,6 +5,7 @@ import {
   type LearnedFeedback,
 } from "@/lib/learning-store";
 import { readSessionFromRequest } from "@/lib/auth";
+import { readJsonObject } from "@/lib/request-body";
 
 type FeedbackPayload = {
   learningRecordId?: string;
@@ -20,7 +21,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
   }
 
-  const payload = (await request.json()) as FeedbackPayload;
+  // 못 읽은 본문은 **평가가 없는 본문과 똑같이** 다룬다. 형식이 틀린 것과 값이 빠진 것을
+  // 갈라 알려 줄 이유가 없다 — 수강생에게는 어차피 같은 한 가지 할 일이다.
+  const payload = ((await readJsonObject(request)) ?? {}) as FeedbackPayload;
 
   if (payload.feedback !== "good" && payload.feedback !== "bad") {
     return NextResponse.json({ error: "평가 값이 필요합니다." }, { status: 400 });

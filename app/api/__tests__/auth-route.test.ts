@@ -149,3 +149,68 @@ describe('POST /api/auth — 거절', () => {
     expect(res.status).toBe(401);
   });
 });
+
+/**
+ * 로그인은 세션 없이 아무나 부를 수 있는 유일한 라우트다. 본문 파싱을 감싸지 않으면
+ * **JSON이 아닌 아무 바이트나 500을 만든다** — 틀린 요청이 장애처럼 보이고, 로그에서는
+ * 진짜 장애와 섞이며, 코드를 찍어 보는 쪽에는 "이 본문은 형식이 달랐다"는 단서가 된다.
+ *
+ * 못 읽은 본문은 **틀린 코드와 완전히 같은 응답**을 받는다: 401 + 같은 한국어 문구 +
+ * 세션 쿠키 없음. 상태코드나 문구가 갈리면 그 차이 자체가 신호가 된다.
+ */
+describe('POST /api/auth — 망가진 본문', () => {
+  const raw = (body: BodyInit | null, headers: HeadersInit = { 'Content-Type': 'application/json' }) =>
+    loginRoute(new Request('http://localhost/api/auth', { method: 'POST', body, headers }));
+
+  const rejected = async (res: LoginResponse) => {
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: '초대코드가 올바르지 않습니다.' });
+    expect(sessionCookie(res)).toBeUndefined();
+    expect(res.headers.get('set-cookie')).toBeNull();
+  };
+
+  it('JSON이 아닌 본문을 500이 아니라 401로 거절한다', async () => {
+    await rejected(await raw('이건 JSON이 아닙니다'));
+  });
+
+  it('중간에 끊긴 JSON도 401로 거절한다', async () => {
+    await rejected(await raw('{"code": "ABC123"'));
+  });
+
+  it('빈 본문도 401로 거절한다', async () => {
+    await rejected(await raw(''));
+  });
+
+  it('본문이 아예 없어도 401로 거절한다', async () => {
+    await rejected(await raw(null));
+  });
+
+  /** `JSON.parse`는 통과하지만 객체가 아닌 값들 — 여기서도 구조분해가 터지면 안 된다. */
+  it('객체가 아닌 JSON(null·문자열·숫자·배열)도 401로 거절한다', async () => {
+    for (const body of ['null', '"ABC123"', '123', '[]', 'true']) {
+      await rejected(await raw(body));
+    }
+  });
+
+  /** 코드 자리에 문자열이 아닌 값이 오면 `verifyInviteCode`의 `.trim()`이 터진다. */
+  it('code가 문자열이 아니면 401로 거절한다', async () => {
+    for (const body of ['{"code": 123}', '{"code": null}', '{"code": {}}', '{"code": ["ABC123"]}']) {
+      await rejected(await raw(body));
+    }
+  });
+
+  /** 헤더가 틀렸다고 500이 되지도, 반대로 검사를 건너뛰지도 않는다. */
+  it('Content-Type이 틀려도 본문이 JSON이면 그대로 통한다', async () => {
+    const res = await raw(JSON.stringify({ code: 'ABC123' }), { 'Content-Type': 'text/plain' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ id: 'u1', name: '수강생1' });
+  });
+
+  /** 망가진 본문 뒤에도 멀쩡한 로그인은 계속 된다 — 라우트가 상태를 망가뜨리지 않는다. */
+  it('망가진 요청 다음에도 정상 로그인은 그대로 된다', async () => {
+    await rejected(await raw('%%%'));
+    const res = await login({ code: 'ABC123' });
+    expect(res.status).toBe(200);
+    expect(readSession(sessionCookie(res)!.value)).toBe('u1');
+  });
+});

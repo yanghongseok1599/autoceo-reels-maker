@@ -271,3 +271,68 @@ describe('orphan sweep', () => {
     expect(await indexIds()).toEqual([job.id]);
   });
 });
+
+/**
+ * 낡은 클레임(stale claim)은 **렌더 도중 워커가 죽었을 때 그 잡을 되찾는 유일한 길이다.**
+ * 창이 너무 짧으면 멀쩡히 렌더 중인 잡을 두 워커가 동시에 집어 같은 파일에 쓰고,
+ * 너무 길면 죽은 워커가 물고 있는 잡이 그만큼 큐에 갇힌다. 어느 쪽도 오류를 내지 않는다.
+ *
+ * 위의 "reclaims a job whose claim went stale"는 `STALE_CLAIM_MS`를 **import해서** 시각을
+ * 만든다. 그래서 상수가 15분에서 1.5분이 되든 150분이 되든 검사도 같이 따라 움직여
+ * 아무것도 잡지 못한다. 여기서는 실제 밀리초를 적어 두고 경계 양쪽을 각각 누른다.
+ */
+describe('낡은 클레임의 경계', () => {
+  const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+  const t0 = new Date('2026-03-01T09:00:00.000Z');
+  const at = (offsetMs: number) => new Date(t0.getTime() + offsetMs);
+
+  const claimedJob = async () => {
+    await enqueueJob({ projectId: 'p1', ownerId: 'u1' });
+    const claimed = await claimNextJob(t0);
+    expect(claimed).not.toBeNull();
+    return claimed!;
+  };
+
+  it('창의 길이는 15분이다', () => {
+    expect(STALE_CLAIM_MS).toBe(FIFTEEN_MINUTES_MS);
+    expect(STALE_CLAIM_MS).toBe(900_000);
+  });
+
+  /** 아직 렌더 중일 수 있는 잡이다. 여기서 내주면 두 워커가 같은 잡을 민다. */
+  it('창 안쪽(1ms 모자람)에서는 다시 내주지 않는다', async () => {
+    await claimedJob();
+    expect(await claimNextJob(at(FIFTEEN_MINUTES_MS - 1))).toBeNull();
+  });
+
+  /** 정확히 15분도 아직 안쪽이다 — 조건은 `>`이지 `>=`가 아니다. */
+  it('정확히 경계 위에서도 다시 내주지 않는다', async () => {
+    await claimedJob();
+    expect(await claimNextJob(at(FIFTEEN_MINUTES_MS))).toBeNull();
+  });
+
+  it('창 바깥(1ms 넘김)에서는 같은 잡을 되찾는다', async () => {
+    const claimed = await claimedJob();
+    const reclaimed = await claimNextJob(at(FIFTEEN_MINUTES_MS + 1));
+    expect(reclaimed?.id).toBe(claimed.id);
+  });
+
+  /** 되찾을 때 시계가 다시 돈다. 아니면 한 번 낡은 잡이 매 폴링마다 계속 재배정된다. */
+  it('되찾으면 창이 되찾은 시각부터 다시 시작한다', async () => {
+    const claimed = await claimedJob();
+    const reclaimAt = at(FIFTEEN_MINUTES_MS + 1);
+    expect((await claimNextJob(reclaimAt))?.claimedAt).toBe(reclaimAt.toISOString());
+
+    // 되찾은 직후부터 다시 15분을 센다 — 첫 클레임 시각(t0)이 아니라.
+    expect(await claimNextJob(new Date(reclaimAt.getTime() + FIFTEEN_MINUTES_MS))).toBeNull();
+    const again = await claimNextJob(new Date(reclaimAt.getTime() + FIFTEEN_MINUTES_MS + 1));
+    expect(again?.id).toBe(claimed.id);
+  });
+
+  /** 렌더 중(`rendering`)에 워커가 죽는 것이 실제로 일어나는 경우다. 같은 창을 쓴다. */
+  it('rendering 상태에도 같은 창이 적용된다', async () => {
+    const claimed = await claimedJob();
+    await updateJob(claimed.id, { status: 'rendering', progress: 55 });
+    expect(await claimNextJob(at(FIFTEEN_MINUTES_MS))).toBeNull();
+    expect((await claimNextJob(at(FIFTEEN_MINUTES_MS + 1)))?.id).toBe(claimed.id);
+  });
+});

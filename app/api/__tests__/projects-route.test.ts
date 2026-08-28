@@ -68,6 +68,27 @@ describe('POST /api/projects — authentication', () => {
     }));
     expect(res.status).toBe(401);
   });
+
+  /**
+   * 서명은 **맞는데** 그 계정이 없는 경우. 탈퇴·삭제된 계정의 쿠키가 30일 동안 살아 있고,
+   * `student-index`가 어긋나 정본 레코드가 사라진 뒤에도 같은 일이 생긴다. 서명 검사만
+   * 통과시키고 레코드 확인을 건너뛰면 그 다음 줄부터는 `student`가 없는 채로 한도 계산과
+   * 차감이 돌아, 사라진 계정으로 릴스를 만들거나 라우트가 500으로 터진다.
+   */
+  it('rejects a validly signed session whose student record no longer exists', async () => {
+    const { status, body } = await create(
+      { script: '대본', voiceReferenceId: 'mine' },
+      'stu_deleted',
+    );
+    expect(status).toBe(401);
+    expect(body.error).toBe('로그인이 필요합니다.');
+  });
+
+  it('creates nothing for a validly signed session with no student record', async () => {
+    await create({ script: '대본', voiceReferenceId: 'mine' }, 'stu_deleted');
+    expect(existsSync(path.join(process.env.STORE_DIR!, 'projects'))).toBe(false);
+    expect(await store.read<JobIndexEntry[]>('job-index', [])).toEqual([]);
+  });
 });
 
 describe('POST /api/projects — voice ownership', () => {

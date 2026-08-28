@@ -9,6 +9,29 @@
 
 ## 배포 전 확인
 
+### 배포 직후 `GET /api/health`를 한 번 두드릴 것
+
+앱에는 워커와 달리 기동 시 환경 검사가 없었다. `SESSION_SECRET` 없이 배포하면
+`signSession`이 **요청 시점에** 던져서, 운영자가 보는 것은 로그인 화면의 500 하나뿐이고
+어느 변수가 빠졌는지는 알 방법이 없었다. 그래서 진단용 라우트를 뒀다.
+
+```bash
+# 워커 토큰이 있어야 이름을 준다. 토큰 없이 부르면 { "ok": false }만 나온다.
+curl -s -H "x-worker-token: $WORKER_TOKEN" https://<앱주소>/api/health
+# {"ok":false,"missing":["SESSION_SECRET"],"recommended":["BLOB_READ_WRITE_TOKEN"]}
+```
+
+- **인증 없는 호출에는 이름을 주지 않는다.** 빠진 변수 목록은 배포의 약한 자리를 그린
+  지도다. 인증은 `POST /api/jobs/next`가 쓰는 그 헤더 하나를 그대로 쓴다.
+- **값은 어느 쪽에도 실리지 않는다.** 이름뿐이다.
+- `missing`이 비어야 배포가 성립한다. `recommended`는 없어도 앱이 돌지만
+  (`BLOB_READ_WRITE_TOKEN`이 없으면 파일 저장소로 떨어진다) Vercel에서는 요청 사이에
+  데이터가 남지 않으므로 **배포에서는 반드시 채울 것.**
+- `WORKER_TOKEN` 자체가 비어 있으면 아무도 이름 목록을 못 본다(`assertWorker`가 무조건
+  false다). 그때는 배포 콘솔에서 직접 확인한다 — 편의를 위해 경계를 열지 않았다.
+
+이 라우트는 진단이다. `signSession`/`readSession`의 fail-closed 동작을 대신하지 않는다.
+
 ### `BLOB_READ_WRITE_TOKEN` 경로는 실제로 검증되지 않았다
 
 로컬에 토큰이 없어 `blobStore`·`blobArtifactStore`가 **목으로만** 커버돼 있다. 특히:

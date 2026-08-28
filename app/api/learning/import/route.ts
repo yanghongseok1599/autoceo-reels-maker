@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createLearningRecord, updateLearningRecord, type LearnedFormat } from "@/lib/learning-store";
 import { readSessionFromRequest } from "@/lib/auth";
+import { readJsonObject, readString, readStringArray } from "@/lib/request-body";
 
 type ImportPayload = {
   format?: LearnedFormat;
@@ -23,7 +24,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
   }
 
-  const payload = (await request.json()) as ImportPayload;
+  // 못 읽은 본문은 빈 본문과 같다 — 아래 세 검사가 그대로 받아 400을 낸다.
+  // 문자열 자리에 숫자가 온 경우도 같이 막는다: `payload.script?.trim()`은 JSON이
+  // 멀쩡해도 500으로 터졌고, `referenceNames: [1]`은 `uniqueCompact` 안에서 터졌다.
+  const body = (await readJsonObject(request)) ?? {};
+  const payload: ImportPayload = {
+    ...(body as ImportPayload),
+    script: readString(body.script),
+    resultFileName: readString(body.resultFileName),
+    referenceNames: readStringArray(body.referenceNames),
+  };
 
   if (payload.format !== "format_a" && payload.format !== "format_d") {
     return NextResponse.json({ error: "지원하지 않는 포맷입니다." }, { status: 400 });

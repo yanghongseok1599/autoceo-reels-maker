@@ -320,4 +320,96 @@ describe.each([
     expect((await send({ profileId: 'mine' })).status).toBe(400);
     expect((await send({ text: '안녕하세요' })).status).toBe(400);
   });
+
+  /**
+   * `instruct`를 그대로 넘기면 `mapToneToTemperature`의 `.includes`가 본문 타입에 끌려간다.
+   * 500은 아니다 — fish 클라이언트가 삼켜서 **502**를 낸다 — 하지만 소유권을 통과한 멀쩡한
+   * 합성 요청이 톤 필드 하나 때문에 실패하는 것은 마찬가지로 틀렸다.
+   */
+  it('instruct가 문자열이 아니어도 502가 아니라 기본 톤으로 합성한다', async () => {
+    const fetchMock = stubFishTts();
+    const POST = await loadRoute();
+    const res = await POST(new Request('http://localhost/api/voicebox/synth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookieFor('u1') },
+      body: '{"text": "안녕하세요", "profileId": "mine", "instruct": 123}',
+    }));
+    expect(res.status).toBe(200);
+    const sent = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(sent.temperature).toBe(0.7);
+  });
+
+  /** 문자열 톤은 그대로 살아 있어야 한다 — 위 가드가 전부를 지워 버리면 안 된다. */
+  it('문자열 instruct는 그대로 온도에 반영된다', async () => {
+    const fetchMock = stubFishTts();
+    const POST = await loadRoute();
+    await POST(new Request('http://localhost/api/voicebox/synth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookieFor('u1') },
+      body: '{"text": "안녕하세요", "profileId": "mine", "instruct": "차분하게"}',
+    }));
+    const sent = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(sent.temperature).toBe(0.55);
+  });
+});
+
+/**
+ * `speakingSpeed`는 generate에만 있다. 숫자가 아닌 값을 그대로 넘기면 속도 계산이
+ * `NaN`이 되고, 그 `NaN`은 JSON에서 `null`로 실려 Fish에 나간다 — 조용히 틀린 요청이다.
+ */
+describe('POST /api/voicebox/generate — speakingSpeed 타입', () => {
+  async function loadGenerate() {
+    process.env.FISH_API_KEY = 'test-fish-key';
+    vi.resetModules();
+    return (await import('../voicebox/generate/route')).POST;
+  }
+
+  function stub() {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit = {}) =>
+      new Response(new Uint8Array([0xff, 0xfb, 0x00]), {
+        status: 200, headers: { 'Content-Type': 'audio/mpeg' },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  const send = async (POST: (r: Request) => Promise<Response>, speakingSpeed: string) =>
+    POST(new Request('http://localhost/api/voicebox/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookieFor('u1') },
+      body: `{"text": "안녕하세요", "profileId": "mine", "speakingSpeed": ${speakingSpeed}}`,
+    }));
+
+  beforeEach(async () => {
+    await seed(voice('mine', 'u1'));
+  });
+
+  it('숫자가 아니면 무시하고 기본 속도로 보낸다 — NaN을 내보내지 않는다', async () => {
+    const fetchMock = stub();
+    const POST = await loadGenerate();
+    for (const bad of ['"빠르게"', 'null', '{}', '["2"]', 'true']) {
+      fetchMock.mockClear();
+      expect((await send(POST, bad)).status, `speakingSpeed: ${bad}`).toBe(200);
+      const sent = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+      expect(sent.prosody.speed, `speakingSpeed: ${bad}`).toBe(1);
+    }
+  });
+
+  /**
+   * 숫자는 그대로 살아 있어야 한다 — 가드가 전부를 `undefined`로 지워 버리면 안 된다.
+   *
+   * 값은 **기본 속도와 다른 결과가 나오는 것**으로 고른다. `speakingSpeed: 2`는
+   * 0.8 + 2 × 0.1 = 1.0이라 값을 통째로 무시했을 때(`speed = 1`)와 구별되지 않는다 —
+   * 이름이 약속한 것보다 적게 단언하는 검사가 바로 그렇게 만들어진다.
+   * 3이면 0.8 + 0.3 = 1.1로 갈린다.
+   */
+  it('숫자 speakingSpeed는 그대로 속도 계산에 쓰인다', async () => {
+    const fetchMock = stub();
+    const POST = await loadGenerate();
+    expect((await send(POST, '3')).status).toBe(200);
+    const sent = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(sent.prosody.speed).toBeCloseTo(1.1, 5);
+    // 무시했을 때의 기본값과 반드시 달라야 한다.
+    expect(sent.prosody.speed).not.toBe(1);
+  });
 });

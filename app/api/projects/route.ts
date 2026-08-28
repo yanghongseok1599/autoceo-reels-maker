@@ -3,6 +3,7 @@ import { createProject, canRender, chargeRender, MONTHLY_RENDER_LIMIT } from '@/
 import { enqueueJob } from '@/lib/jobs';
 import { authorizeVoice } from '@/lib/voice-access';
 import { getStudent, readSessionFromRequest, saveStudent } from '@/lib/auth';
+import { readJsonObject, readString } from '@/lib/request-body';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,10 +21,14 @@ export async function POST(request: Request) {
     );
   }
 
-  const { script, voiceReferenceId } = (await request.json()) as {
-    script?: string;
-    voiceReferenceId?: string;
-  };
+  /**
+   * 못 읽은 본문은 빈 본문과 같다 — 바로 아래 "대본을 입력해주세요"가 그대로 받는다.
+   * 문자열이 아닌 값도 없는 것으로 본다: `{"script": 123}`은 `script.trim()`에서,
+   * `{"voiceReferenceId": 123}`은 `authorizeVoice`의 `voiceId?.trim()`에서 500이 났다.
+   */
+  const body = (await readJsonObject(request)) ?? {};
+  const script = readString(body.script);
+  const voiceReferenceId = readString(body.voiceReferenceId);
   if (!script?.trim()) {
     return NextResponse.json({ error: '대본을 입력해주세요.' }, { status: 400 });
   }

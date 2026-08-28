@@ -11,10 +11,16 @@ import { store } from './store';
  * 직접 `readFile`/`writeFile` 하지 않는 이유도 목소리와 같다 — Vercel의 파일시스템은
  * 읽기 전용이라 배포하면 업로드가 조용히 실패하고 목록은 늘 비어 있게 된다.
  */
-const KEY = 'clipart-library';
 
-async function readAll(): Promise<ClipartEntry[]> {
-  const entries = await store.read<ClipartEntry[]>(KEY, []);
+/**
+ * 소유자당 키 하나. 예전에는 모두의 클립아트가 `clipart-library` 배열 하나에 있었고,
+ * 업로드 한 번이 그 배열 전체를 읽고 고쳐 다시 쓰는 일이었다. 두 수강생이 같은 순간에
+ * 올리면 나중에 쓴 쪽이 앞선 쪽의 캐릭터를 지웠다. 키를 나누면 겹칠 자리 자체가 없다.
+ */
+const keyFor = (ownerId: string) => `clipart-library/${ownerId}`;
+
+async function readAll(ownerId: string): Promise<ClipartEntry[]> {
+  const entries = await store.read<ClipartEntry[]>(keyFor(ownerId), []);
   return Array.isArray(entries) ? entries : [];
 }
 
@@ -37,10 +43,15 @@ export function newClipartId(): string {
   return `clipart_${randomUUID()}`;
 }
 
-/** 그 수강생이 올린 것만 돌려준다. 소유자가 빈 값이면 아무것도 주지 않는다(전부가 아니라). */
+/**
+ * 그 수강생이 올린 것만 돌려준다. 소유자가 빈 값이면 아무것도 주지 않는다(전부가 아니라).
+ *
+ * 키가 이미 소유자를 나누지만 선가드와 필터는 둘 다 남긴다. 방어가 한 겹뿐이면 나중에
+ * 키 구조를 바꿀 때 경계가 조용히 열린다.
+ */
 export async function listStudentClipart(ownerId: string): Promise<ClipartEntry[]> {
   if (!ownerId) return [];
-  return (await readAll()).filter((entry) => entry.ownerId === ownerId);
+  return (await readAll(ownerId)).filter((entry) => entry.ownerId === ownerId);
 }
 
 /**
@@ -76,12 +87,12 @@ export async function addStudentClipart(
   entry: Omit<ClipartEntry, 'source'>,
 ): Promise<ClipartEntry> {
   const saved: ClipartEntry = { ...entry, source: 'student' };
-  const all = await readAll();
+  const all = await readAll(saved.ownerId);
   // 소유자까지 함께 본다. 키워드만 보면 수강생 A가 `기쁨`을 올릴 때 B의 `기쁨`이 사라진다.
   const at = all.findIndex((e) => e.ownerId === saved.ownerId && e.keyword === saved.keyword);
 
   const next = at >= 0 ? all.map((e, i) => (i === at ? saved : e)) : [...all, saved];
-  await store.write(KEY, next);
+  await store.write(keyFor(saved.ownerId), next);
   return saved;
 }
 

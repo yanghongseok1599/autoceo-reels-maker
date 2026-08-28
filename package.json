@@ -13,7 +13,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "studio": "npm -w @studio/video run studio",
-    "sync:preset-catalog": "npx tsx scripts/sync-preset-catalog.ts"
+    "sync:preset-catalog": "npx tsx scripts/sync-preset-catalog.ts",
+    "migrate:store": "npx tsx scripts/shard-store.ts",
+    "repair:student-index": "npx tsx scripts/repair-student-index.ts"
   },
   "dependencies": {
     "@types/node": "^20.12.12",

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { listFishVoices, upsertFishVoice } from '../fish-voice-store';
@@ -9,9 +9,7 @@ const voice = (id: string, ownerId: string) => ({
   createdAt: '2026-08-26T00:00:00Z',
 });
 
-beforeEach(async () => {
-  await store.write('fish-voices', []);
-});
+/** 저장소는 `vitest.setup.ts`가 테스트마다 새 `STORE_DIR`을 주므로 따로 비울 것이 없다. */
 
 describe('listFishVoices', () => {
   it('returns the voices that student cloned', async () => {
@@ -66,13 +64,60 @@ describe('storage backend', () => {
   it('writes through the store, into STORE_DIR rather than the repo .local-data', async () => {
     await upsertFishVoice(voice('v1', 'u1'));
     const written = JSON.parse(
-      await readFile(path.join(process.env.STORE_DIR as string, 'fish-voices.json'), 'utf8'),
+      await readFile(path.join(process.env.STORE_DIR as string, 'fish-voices', 'u1.json'), 'utf8'),
     );
     expect(written).toEqual([voice('v1', 'u1')]);
   });
 
-  it('reads what the store holds under the shared key', async () => {
-    await store.write('fish-voices', [voice('seeded', 'u1')]);
+  it('reads what the store holds under that student key', async () => {
+    await store.write('fish-voices/u1', [voice('seeded', 'u1')]);
     expect((await listFishVoices('u1')).map((v) => v.id)).toEqual(['seeded']);
+  });
+});
+
+/**
+ * 이 Task의 요점. 옛 구조에서는 목소리 전체가 배열 하나에 있어서, 두 수강생이 같은 순간에
+ * 클론하면 나중에 쓴 쪽이 앞선 쪽을 지웠다.
+ */
+describe('fish voice keys – 소유자별 키', () => {
+  it('keeps both voices when two students clone at the same time', async () => {
+    await Promise.all([
+      upsertFishVoice(voice('mine', 'u1')),
+      upsertFishVoice(voice('theirs', 'u2')),
+    ]);
+    expect((await listFishVoices('u1')).map((v) => v.id)).toEqual(['mine']);
+    expect((await listFishVoices('u2')).map((v) => v.id)).toEqual(['theirs']);
+  });
+
+  it('writes each student to their own key', async () => {
+    await upsertFishVoice(voice('mine', 'u1'));
+    expect(await store.read('fish-voices/u1', [])).toHaveLength(1);
+    expect(await store.read('fish-voices', null)).toBeNull();
+  });
+
+  // 소유권 경계는 이번 변경으로도 그대로여야 한다.
+  it('still shows a student nothing of another student', async () => {
+    await upsertFishVoice(voice('mine', 'u1'));
+    expect(await listFishVoices('u2')).toEqual([]);
+  });
+
+  /**
+   * 필터가 **두 번째 겹**이라는 것을 직접 눌러 본다. 키가 이미 소유자를 나누므로 이 검사가
+   * 없으면 필터를 지워도 아무것도 실패하지 않는다 — 그러면 언젠가 "이제 중복"이라며
+   * 지워지고, 그 뒤 키 구조를 바꾸는 사람은 경계가 열리는 걸 못 본다.
+   */
+  it("drops a foreign-owned record that somehow sits in this student's key", async () => {
+    await store.write('fish-voices/u1', [voice('mine', 'u1'), voice('theirs', 'u2')]);
+    expect((await listFishVoices('u1')).map((v) => v.id)).toEqual(['mine']);
+  });
+
+  /**
+   * 빈 소유자는 저장소를 **읽지 않는다**. 선가드가 없으면 빈 문자열이 그대로 키가 되고
+   * (`fish-voices/`), 그 자리에 있는 것은 소유자 필터마저 통과한다(`'' === ''`). 그때 빈 세션 하나가
+   * 전부를 보게 된다 — 선가드가 지워져도 아무것도 실패하지 않으면 언젠가 지워진다.
+   */
+  it('reads no key at all for a blank owner', async () => {
+    await store.write('fish-voices/', [voice('orphan', '')]);
+    expect(await listFishVoices('')).toEqual([]);
   });
 });

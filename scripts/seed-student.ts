@@ -8,12 +8,17 @@
  *
  *   BLOB_READ_WRITE_TOKEN=<토큰> npx tsx scripts/seed-student.ts "홍길동"
  *
- * `.local-data/students.json`을 직접 편집하면 로컬에서만 통한다 — 배포는 Blob 저장소를
+ * `.local-data/students/`를 직접 편집하면 로컬에서만 통한다 — 배포는 Blob 저장소를
  * 고르기 때문에 그렇게 만든 코드는 전부 거부된다. 그래서 이 스크립트는 파일이 아니라
  * **선택된 저장소**(`selectStore()`)에 쓴다.
  */
 import { randomBytes } from 'node:crypto';
-import { hashCode, type StudentAccount } from '../lib/auth';
+import {
+  hashCode,
+  inviteCodeTaken,
+  registerStudent,
+  type StudentAccount,
+} from '../lib/auth';
 import { selectStore } from '../lib/store';
 import { currentPeriod } from '../lib/projects';
 
@@ -35,16 +40,22 @@ export function buildStudent(name: string, code: string, now: Date = new Date())
   };
 }
 
+/**
+ * 계정은 자기 키(`students/<id>`)에 쓰고, 초대코드 해시는 `student-index`에 덧붙인다
+ * (`lib/auth.ts`의 `registerStudent`).
+ *
+ * 예전에는 `students` 배열 전체를 다시 썼다. 그래서 렌더 요청이 그 배열을 읽어 둔 사이에
+ * 발급하면, 렌더의 쓰기가 **방금 발급한 계정을 지웠다** — 이 스크립트는 이미 성공과
+ * 초대코드를 출력한 뒤라 운영자도 수강생도 아무 신호를 받지 못했다.
+ */
 export async function seedStudent(name: string, code: string): Promise<StudentAccount> {
-  const store = selectStore();
-  const students = await store.read<StudentAccount[]>('students', []);
   const student = buildStudent(name, code);
 
-  if (students.some((s) => s.codeHash === student.codeHash)) {
+  if (await inviteCodeTaken(student.codeHash)) {
     throw new Error('이미 등록된 초대코드입니다. 다른 코드를 쓰거나 코드를 비워 자동 생성하세요.');
   }
 
-  await store.write('students', [...students, student]);
+  await registerStudent(student);
   return student;
 }
 

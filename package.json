@@ -12,6 +12,7 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:mutation": "npx stryker run",
     "studio": "npm -w @studio/video run studio",
     "sync:preset-catalog": "npx tsx scripts/sync-preset-catalog.ts",
     "migrate:store": "npx tsx scripts/shard-store.ts",
@@ -28,6 +29,8 @@
     "typescript": "^5.4.5"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "^10.0.0",
+    "@stryker-mutator/vitest-runner": "^10.0.0",
     "@vitejs/plugin-react": "^4",
     "vitest": "^2"
   },

@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# 같은 브랜치에 새 푸시가 오면 진행 중인 실행을 취소한다. 뮤테이션 잡이 분 단위라
+# 이게 없으면 오래된 실행이 러너를 붙잡고 있는다.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── 빠른 잡 셋은 서로 기다리지 않는다 ────────────────────────────────────
+  # 타입이 깨진 것을 알기 위해 뮤턴트 수천 개를 기다릴 이유가 없다.
+  typecheck:
+    name: types
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # 전체 스위트. 여기에는 실제 Remotion 프레임을 렌더하는
+      # missingCharacterRender.test.ts가 **들어 있다** — 34초 중 31초가 그 파일이다.
+      # 뮤테이션 잡에서만 빠진다.
+      - run: npx vitest run
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx next build
+
+  # ── 느린 잡 ──────────────────────────────────────────────────────────────
+  # `test`가 초록일 때만 돈다. 스위트가 빨간 상태에서는 Stryker의 dry run이
+  # 어차피 실패하고, 실패를 확인하는 데 몇 분을 태우게 된다.
+  mutation:
+    name: mutation
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # `thresholds.break` 아래로 떨어지면 0이 아닌 코드로 끝난다 — 그게 이 잡의 전부다.
+      - run: npm run test:mutation
+      - name: upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          retention-days: 14

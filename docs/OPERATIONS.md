@@ -110,7 +110,19 @@ fish-voices.json · clipart-library.json · learning-records.json
 - 소유자 필터를 지워도 아무 테스트도 실패하지 않음(**보안 층이 고정돼 있지 않았다**)
 - 키가 죽으면 그 키를 읽던 단언이 폴백을 받아 조용히 공허해짐 — 이 계획에서만 네 번
 
-**대응**: 중요한 동작을 지키는 테스트는 **구현을 망가뜨려 실패하는지 확인**할 것. 상시 뮤테이션 커버리지를 CI에 넣는 것이 별도 과제 값어치가 있다.
+**대응**: 이제 CI가 자동으로 본다 — `npm run test:mutation`(Stryker, 설정은 `stryker.config.mjs`).
+`.github/workflows/ci.yml`의 `mutation` 잡이 돌린다.
+
+- 범위: `lib/**`, `app/api/**/route.ts`, `packages/video/src/utils/**`.
+  씬 컴포넌트와 `components/**`는 **일부러 뺐다** — 그쪽은 프레임을 렌더해서 보는 것이지
+  단위 테스트로 보는 게 아니라서 뮤테이션이 발견이 아니라 잡음을 낸다.
+- 렌더 테스트(`missingCharacterRender.test.ts`)는 뮤테이션 실행에서만 빠진다
+  (`vitest.mutation.config.ts`). 34초 스위트 중 31초가 그 파일이고, 뮤턴트마다 다시 도니까
+  들어가면 실행 자체가 불가능하다. **일반 테스트 잡에는 그대로 있다.**
+- `thresholds.break`는 **래칫**이다. 실측 점수 바로 아래에 두고 **올리기만 한다.**
+  빨개지면 임계값을 내리는 게 아니라 살아남은 뮤턴트를 죽이는 테스트를 쓴다.
+
+여전히 유효한 습관: 중요한 동작을 지키는 테스트는 **구현을 망가뜨려 실패하는지 확인**할 것.
 
 ---
 

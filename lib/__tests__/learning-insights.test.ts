@@ -208,3 +208,70 @@ describe('학습 기록 소유권 – 경계', () => {
     expect((await getLearningInsights('u1', 'format_a')).bestPrompt).toBe('조용한 수강생의 대본');
   });
 });
+
+/**
+ * 위의 소유권 검사들은 남의 소유자(u2)가 기록을 **하나도 갖지 않은** 상태로 묻는다.
+ * 빈 목록은 "id가 틀렸다"와 "주인이 틀렸다"를 구별하지 못한다 — 어느 쪽이 막았는지
+ * 모른 채 통과하므로, id 검사를 통째로 지워도 아무것도 실패하지 않는다.
+ * 그래서 여기서는 **부르는 쪽이 자기 기록을 가진 채로** 엉뚱한 id·jobId를 댄다.
+ */
+describe('학습 기록 – 자기 기록을 가진 채 엉뚱한 id를 댈 때', () => {
+  const held = (ownerId: string) => store.read<LearningRecord[]>(`learning-records/${ownerId}`, []);
+
+  it("patches nothing when the id belongs to another student's record", async () => {
+    await createLearningRecord({
+      ownerId: 'u1', jobId: 'j-mine', format: 'format_a', script: '내 대본',
+    });
+    const theirs = await createLearningRecord({
+      ownerId: 'u2', jobId: 'j-theirs', format: 'format_a', script: '남의 대본',
+    });
+
+    expect(await updateLearningRecord('u1', theirs.id, { feedback: 'bad' })).toBeNull();
+    // id 검사가 없으면 u1의 **자기** 기록이 대신 맞았다고 판정돼 조용히 고쳐진다.
+    expect((await held('u1')).map((record) => record.feedback)).toEqual([undefined]);
+    expect((await getLearningInsights('u1', 'format_a')).bad).toBe(0);
+  });
+
+  it('patches nothing for an id that exists nowhere', async () => {
+    await createLearningRecord({
+      ownerId: 'u1', jobId: 'j-mine', format: 'format_a', script: '내 대본',
+    });
+
+    expect(await updateLearningRecord('u1', 'learn_nosuchrecord', { feedback: 'good' })).toBeNull();
+    expect((await held('u1')).map((record) => record.feedback)).toEqual([undefined]);
+  });
+
+  it('patches the record the id names, not merely the first one the caller owns', async () => {
+    const first = await createLearningRecord({
+      ownerId: 'u1', jobId: 'j-first', format: 'format_a', script: '첫 대본',
+    });
+    const second = await createLearningRecord({
+      ownerId: 'u1', jobId: 'j-second', format: 'format_a', script: '둘째 대본',
+    });
+
+    expect((await updateLearningRecord('u1', first.id, { feedback: 'good' }))?.id).toBe(first.id);
+    const records = await held('u1');
+    expect(records.find((record) => record.id === first.id)?.feedback).toBe('good');
+    expect(records.find((record) => record.id === second.id)?.feedback).toBeUndefined();
+  });
+
+  it('finds nothing for a jobId the caller does not have, though they do have records', async () => {
+    await createLearningRecord({
+      ownerId: 'u1', jobId: 'j-mine', format: 'format_a', script: '내 대본',
+    });
+
+    expect(await findLearningRecordByJobId('u1', 'j-someone-else')).toBeNull();
+  });
+
+  it('finds the record the jobId names, not merely the first one the caller owns', async () => {
+    await createLearningRecord({
+      ownerId: 'u1', jobId: 'j-first', format: 'format_a', script: '첫 대본',
+    });
+    await createLearningRecord({
+      ownerId: 'u1', jobId: 'j-second', format: 'format_a', script: '둘째 대본',
+    });
+
+    expect((await findLearningRecordByJobId('u1', 'j-first'))?.script).toBe('첫 대본');
+    expect((await findLearningRecordByJobId('u1', 'j-second'))?.script).toBe('둘째 대본');
+  });
+});

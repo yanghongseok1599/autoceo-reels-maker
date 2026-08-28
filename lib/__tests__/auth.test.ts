@@ -7,6 +7,8 @@ import {
   saveStudent,
   signSession,
   readSession,
+  readSessionFromRequest,
+  SESSION_COOKIE,
   verifyInviteCode,
   STUDENT_INDEX_KEY,
   type StudentAccount,
@@ -158,5 +160,82 @@ describe('verifyInviteCode — 인덱스가 어긋났을 때', () => {
     await registerStudent(account('u2', 'DEF456'));
     expect((await verifyInviteCode('ABC123'))?.id).toBe('u1');
     expect((await verifyInviteCode('DEF456'))?.id).toBe('u2');
+  });
+});
+
+/**
+ * 브라우저는 쿠키를 **하나만** 보내지 않는다. 세션 쿠키는 `theme`·`lang` 사이 아무 자리에나
+ * 있고, 이름 앞에는 `; ` 뒤의 공백이 붙으며, 값이 없는 조각이 섞이기도 한다. 검사가 쿠키
+ * 하나짜리 헤더만 보면 이름 비교와 두 `trim()`이 한 번도 실행되지 않는다 — 그것들을 통째로
+ * 지워도 아무 검사가 실패하지 않는다는 뜻이고, 여기서 열리는 문은 남의 계정이다.
+ */
+describe('readSessionFromRequest — 쿠키가 여럿인 진짜 헤더', () => {
+  const withCookie = (cookie: string) =>
+    new Request('http://localhost/api/projects', { headers: { cookie } });
+
+  let signed: string;
+
+  beforeEach(() => {
+    process.env.SESSION_SECRET = 'test-secret';
+    signed = signSession('u1');
+  });
+
+  it('finds the session even when it is not the first cookie', () => {
+    const header = `theme=dark; ${SESSION_COOKIE}=${encodeURIComponent(signed)}; lang=ko`;
+    expect(readSessionFromRequest(withCookie(header))).toBe('u1');
+  });
+
+  /**
+   * `; ` 뒤에는 공백이 남는다. 이름의 `trim()`이 없으면 두 번째 이후의 쿠키는 **영원히**
+   * 세션으로 인정되지 않는다 — 로그인한 사람이 로그아웃된 것처럼 보인다.
+   */
+  it('tolerates the space that follows "; " before the cookie name', () => {
+    expect(readSessionFromRequest(withCookie(`a=1;   ${SESSION_COOKIE}=${encodeURIComponent(signed)}`)))
+      .toBe('u1');
+  });
+
+  /** 값 쪽 공백도 같다. 공백이 붙은 채로 서명을 검증하면 길이가 달라 통과하지 못한다. */
+  it('tolerates whitespace around the cookie value', () => {
+    expect(readSessionFromRequest(withCookie(`a=1; ${SESSION_COOKIE}= ${encodeURIComponent(signed)} ; b=2`)))
+      .toBe('u1');
+  });
+
+  /**
+   * 이름이 세션 이름을 **포함**할 뿐인 쿠키는 세션이 아니다. 비교가 느슨해지면 아무나
+   * `not_student_session`에 남의 서명을 담아 보내는 것으로 그 사람이 된다.
+   */
+  it('refuses a cookie whose name merely contains the session name', () => {
+    expect(readSessionFromRequest(withCookie(`not_${SESSION_COOKIE}=${encodeURIComponent(signed)}`)))
+      .toBeNull();
+  });
+
+  it('refuses a cookie whose name merely starts with the session name', () => {
+    expect(readSessionFromRequest(withCookie(`${SESSION_COOKIE}_backup=${encodeURIComponent(signed)}`)))
+      .toBeNull();
+  });
+
+  it('skips a cookie part that has no "=" at all', () => {
+    expect(readSessionFromRequest(withCookie(`flag; ${SESSION_COOKIE}=${encodeURIComponent(signed)}`)))
+      .toBe('u1');
+  });
+
+  /**
+   * 값 없는 조각의 이름을 잘라 세션 이름과 맞춰 보면 안 된다. 아래 조각은 세션 이름보다
+   * 딱 한 글자 길다 — `=`가 없을 때 그냥 넘어가지 않으면 마지막 글자만 떨어져 나가
+   * **세션 쿠키로 오인되고**, 진짜 세션 쿠키는 읽히지도 못한 채 요청이 거절된다.
+   */
+  it('does not mistake a valueless part for the session cookie', () => {
+    const header = `${SESSION_COOKIE}0; ${SESSION_COOKIE}=${encodeURIComponent(signed)}`;
+    expect(readSessionFromRequest(withCookie(header))).toBe('u1');
+  });
+
+  /** 잘못 인코딩된 값은 500이 아니라 거절이다. */
+  it('returns null for a malformed percent-encoding instead of throwing', () => {
+    expect(() => readSessionFromRequest(withCookie(`${SESSION_COOKIE}=%zz`))).not.toThrow();
+    expect(readSessionFromRequest(withCookie(`${SESSION_COOKIE}=%zz`))).toBeNull();
+  });
+
+  it('returns null when no cookie in the header is the session', () => {
+    expect(readSessionFromRequest(withCookie('theme=dark; lang=ko'))).toBeNull();
   });
 });

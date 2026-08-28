@@ -12,3 +12,6 @@ public/generated-audio/
 .DS_Store
 public/renders/
 public/clipart/
+
+.stryker-tmp
+reports/

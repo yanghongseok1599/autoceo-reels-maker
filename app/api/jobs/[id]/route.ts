@@ -3,6 +3,7 @@ import { updateJob, getJob, type RenderJob } from '@/lib/jobs';
 import { readSessionFromRequest } from '@/lib/auth';
 import { assertWorker } from '../next/route';
 import { readJsonObject } from '@/lib/request-body';
+import { isWorkerAlive } from '@/lib/worker-liveness';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,7 +40,23 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (!job || job.ownerId !== ownerId) {
     return NextResponse.json({ error: '존재하지 않는 작업입니다.' }, { status: 404 });
   }
+  /**
+   * 화면이 이미 1초마다 두드리는 자리다. 워커 생존을 여기 실어 보내면 폴링 루프가 하나로
+   * 유지된다.
+   *
+   * **소유자 확인을 통과한 뒤에** 묻는다. 값 자체는 워커 하나에 대한 사실이라 남의 잡을
+   * 알려 주지 않지만, 남의 잡 id로 200이 나가는 순간 그 id가 존재한다는 사실이 새기 때문에
+   * 위의 404보다 앞설 수는 없다.
+   *
+   * 큐에 있을 때만 읽는다. 이미 집힌 잡에는 화면이 이 값을 쓰지 않으므로, 렌더가 도는
+   * 몇 분 동안 초당 한 번씩 저장소를 읽을 이유가 없다. 안 물어봤을 때는 `false`가 아니라
+   * `null`이다 — "워커가 없다"와 "묻지 않았다"는 다른 말이고, 화면이 그 둘을 같게 읽으면
+   * 멀쩡한 렌더 중에 경고가 뜬다.
+   */
+  const workerAlive = job.status === 'queued' ? await isWorkerAlive() : null;
+
   return NextResponse.json({
     status: job.status, progress: job.progress, resultUrl: job.resultUrl, error: job.error,
+    workerAlive,
   });
 }
